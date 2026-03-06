@@ -1,0 +1,17 @@
+name: Auto Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Deploy
+        run: |
+          curl -sf -X POST "{{DEPLOY_URL}}" \
+            -H "CF-Access-Client-Id: {{CF_ACCESS_CLIENT_ID}}" \
+            -H "CF-Access-Client-Secret: ${{ secrets.{{CF_ACCESS_CLIENT_SECRET_NAME}} }}" \
+            -H "Content-Type: application/json" \
+            -d '{"ref": "${{ github.sha }}", "repo": "${{ github.repository }}"}'

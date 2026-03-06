@@ -1,0 +1,47 @@
+{
+  "repo": "owner/repo-name",
+  "label": "mac-mini",
+  "repoDir": "$HOME/Workspace/project",
+  "worktreeBase": "$HOME/Workspace/project-worktrees",
+
+  "auth": {
+    "type": "gh-cli"
+  },
+
+  "pollInterval": 180,
+
+  "phases": {
+    "analyze": {
+      "maxTurns": 10,
+      "useWorktree": true
+    },
+    "implement": {
+      "maxTurns": 30,
+      "preCommands": ["npm ci --silent"],
+      "postValidation": ["npm run test:run", "npm run lint"],
+      "promptSuffix": ""
+    },
+    "review": {
+      "maxTurns": 15,
+      "preCommands": ["npm ci --silent"],
+      "postValidation": ["npm run test:run", "npm run lint"]
+    },
+    "conflict": {
+      "maxTurns": 15,
+      "preCommands": ["npm ci --silent"],
+      "postValidation": ["npm run test:run", "npm run lint"]
+    }
+  },
+
+  "webhookServer": {
+    "port": 8080,
+    "adapters": [],
+    "deployScript": "./scripts/deploy.sh"
+  },
+
+  "deploy": {
+    "tmuxSessions": {
+      "task-runner": "cd $REPO_DIR && exec ./node_modules/.bin/mac-mini-task-runner --config mac-mini.config.json"
+    }
+  }
+}

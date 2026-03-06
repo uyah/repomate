@@ -1,0 +1,35 @@
+{
+  "name": "@uyah/mac-mini-automation",
+  "version": "0.1.0",
+  "description": "Mac Mini automation: GitHub Issue → Claude Code → PR workflow",
+  "type": "module",
+  "bin": {
+    "mac-mini-task-runner": "./bin/task-runner.sh",
+    "mac-mini-worktree": "./bin/worktree.sh",
+    "mac-mini-deploy": "./bin/deploy.sh",
+    "mac-mini-setup": "./bin/setup-mac-mini.sh"
+  },
+  "exports": {
+    "./server": "./server/index.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "templates/",
+    "config.schema.json",
+    "config.example.json"
+  ],
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "better-sqlite3": "^12.6.2",
+    "hono": "^4.7.6"
+  },
+  "optionalDependencies": {
+    "@slack/bolt": "^4.6.0"
+  },
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

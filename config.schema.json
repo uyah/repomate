@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mac Mini Automation Config",
+  "type": "object",
+  "required": ["repo", "label", "repoDir", "worktreeBase", "auth", "phases"],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "description": "GitHub owner/repo (e.g. 'owner/repo-name')"
+    },
+    "label": {
+      "type": "string",
+      "description": "GitHub Issue label that triggers automation"
+    },
+    "repoDir": {
+      "type": "string",
+      "description": "Local repository directory path (supports $HOME)"
+    },
+    "worktreeBase": {
+      "type": "string",
+      "description": "Directory for worktrees (supports $HOME)"
+    },
+    "auth": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["gh-cli", "github-app"]
+        },
+        "appId": { "type": "string" },
+        "installationId": { "type": "string" },
+        "pemFile": { "type": "string" }
+      }
+    },
+    "pollInterval": {
+      "type": "integer",
+      "default": 180,
+      "description": "Poll interval in seconds"
+    },
+    "phases": {
+      "type": "object",
+      "properties": {
+        "analyze": { "$ref": "#/$defs/phaseConfig" },
+        "implement": { "$ref": "#/$defs/phaseConfig" },
+        "review": { "$ref": "#/$defs/phaseConfig" },
+        "conflict": { "$ref": "#/$defs/phaseConfig" }
+      }
+    },
+    "webhookServer": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "default": 8080 },
+        "adapters": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["slack", "cloudflare-auth"] }
+        },
+        "deployScript": { "type": "string" }
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "properties": {
+        "tmuxSessions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "phaseConfig": {
+      "type": "object",
+      "properties": {
+        "maxTurns": { "type": "integer" },
+        "useWorktree": { "type": "boolean" },
+        "preCommands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "postValidation": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "promptSuffix": { "type": "string" }
+      }
+    }
+  }
+}

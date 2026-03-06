@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mac Mini Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    min-height: 100vh; overflow: hidden;
+  }
+
+  /* === Split Layout === */
+  .app { display: flex; height: 100vh; }
+  .list-pane {
+    width: 380px; min-width: 300px; max-width: 480px;
+    border-right: 1px solid #1a1a1a;
+    display: flex; flex-direction: column; background: #0a0a0a;
+  }
+  .detail-pane {
+    flex: 1; display: flex; flex-direction: column; background: #0d0d0d;
+  }
+  .detail-pane.empty-state { align-items: center; justify-content: center; }
+  .detail-empty { color: #333; font-size: 1rem; }
+
+  /* Mobile: detail overlays */
+  @media (max-width: 768px) {
+    .list-pane { width: 100%; max-width: none; }
+    .detail-pane {
+      position: fixed; inset: 0; z-index: 50;
+      transform: translateX(100%); transition: transform 0.25s ease;
+    }
+    .detail-pane.open { transform: translateX(0); }
+    .detail-pane.empty-state { display: none; }
+  }
+
+  /* === List Pane === */
+  .list-header { padding: 12px 14px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
+  .list-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .list-header h1 { font-size: 1.1rem; color: #fff; }
+  .status-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .status-pill { padding: 3px 10px; border-radius: 16px; font-size: 0.75rem; font-weight: 600; }
+  .pill-ok { background: #1a3a1a; color: #4ade80; }
+  .pill-running { background: #1a2a3a; color: #60a5fa; }
+  .pill-count { background: #2a2a2a; color: #aaa; }
+  .search-row { display: flex; gap: 6px; }
+  .search-row input { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 7px 10px; color: #fff; font-size: 0.8rem; outline: none; }
+  .search-row input:focus { border-color: #60a5fa; }
+  .refresh-btn { background: none; border: 1px solid #2a2a2a; color: #666; border-radius: 8px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; }
+
+  .list-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Thread list item */
+  .thread-item {
+    padding: 10px 14px; border-bottom: 1px solid #141414; cursor: pointer;
+    transition: background 0.1s;
+  }
+  .thread-item:hover { background: #161616; }
+  .thread-item.active { background: #1a1a2a; border-left: 3px solid #60a5fa; }
+  .thread-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .thread-item-user { font-size: 0.7rem; font-weight: 600; color: #60a5fa; text-transform: uppercase; }
+  .thread-item-time { font-size: 0.65rem; color: #555; }
+  .thread-item-prompt { font-size: 0.82rem; color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; }
+  .thread-item-footer { display: flex; gap: 6px; align-items: center; }
+  .thread-item-replies { font-size: 0.65rem; color: #555; }
+
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
+  .badge-running { background: #1e3a5f; color: #60a5fa; animation: pulse 1.5s infinite; }
+  .badge-completed { background: #1a3a1a; color: #4ade80; }
+  .badge-failed { background: #3a1a1a; color: #f87171; }
+  .badge-cancelled { background: #3a3a1a; color: #fbbf24; }
+  .badge-interrupted { background: #2a2a2a; color: #888; }
+  .badge-max_turns { background: #3a2a1a; color: #fbbf24; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  /* New task input at bottom of list */
+  .list-input {
+    border-top: 1px solid #1a1a1a; padding: 10px 14px; flex-shrink: 0;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    background: #0e0e0e;
+  }
+  .list-input .file-preview { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .list-input .input-row { display: flex; gap: 6px; }
+  .list-input input[type="text"] {
+    flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+    padding: 9px 10px; color: #fff; font-size: 0.85rem; outline: none;
+  }
+  .list-input input[type="text"]:focus { border-color: #60a5fa; }
+  .list-input button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .list-input button:disabled { background: #333; color: #666; }
+  .attach-btn-main { background: #2a2a2a !important; color: #aaa !important; padding: 9px 10px !important; cursor: pointer; }
+
+  /* === Detail Pane === */
+  .detail-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0;
+    background: #0d0d0d;
+  }
+  .detail-back { display: none; background: none; border: none; color: #60a5fa; font-size: 1.2rem; cursor: pointer; padding: 4px; }
+  @media (max-width: 768px) { .detail-back { display: block; } }
+  .detail-title { font-size: 0.9rem; color: #ccc; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail-actions { display: flex; gap: 6px; }
+  .detail-cancel-btn { background: #3a1a1a; color: #f87171; border: 1px solid #5a2a2a; border-radius: 6px; padding: 4px 10px; font-size: 0.7rem; cursor: pointer; }
+  .wt-changes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .wt-changes-summary { color: #fbbf24; font-size: 0.75rem; font-weight: 600; width: 100%; margin-bottom: 2px; }
+  .wt-btn { border: none; border-radius: 6px; padding: 4px 10px; font-size: 0.7rem; cursor: pointer; font-weight: 600; }
+  .wt-merge { background: #1a3a1a; color: #4ade80; }
+  .wt-pr { background: #1a2a3a; color: #60a5fa; }
+  .wt-discard { background: #2a2a2a; color: #888; }
+
+  .detail-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0; }
+
+  /* Messages */
+  .msg { padding: 12px 16px; border-bottom: 1px solid #141414; }
+  .msg-user { background: #0d0d0d; }
+  .msg-assistant { background: #111; }
+  .msg-reply { padding-left: 28px; }
+  .msg-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .msg-role { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
+  .msg-role-user { color: #60a5fa; }
+  .msg-role-assistant { color: #4ade80; }
+  .msg-text { font-size: 0.88rem; color: #ccc; word-break: break-word; white-space: pre-wrap; }
+  .task-id { font-family: monospace; color: #555; font-size: 0.65rem; }
+  .time { font-size: 0.65rem; color: #555; }
+  .stream-text { color: #888; font-style: italic; }
+  .error-text { color: #f87171; }
+  .retry-btn { background: #3a2a1a; color: #fbbf24; border: 1px solid #5a4a2a; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; margin-top: 6px; }
+  .retry-btn:hover { background: #4a3a2a; }
+
+  /* Events */
+  .evt-text { margin: 4px 0; }
+  .evt-group { border-left: 2px solid #1e3a5f; margin: 6px 0; padding-left: 10px; }
+  .evt-group-header { cursor: pointer; display: flex; align-items: baseline; gap: 6px; font-size: 0.8rem; padding: 3px 0; }
+  .evt-group-header:hover { opacity: 0.8; }
+  .evt-toggle { color: #555; font-size: 0.65rem; flex-shrink: 0; transition: transform 0.15s; display: inline-block; width: 10px; }
+  .evt-toggle.open { transform: rotate(90deg); }
+  .evt-tool-name { color: #60a5fa; font-weight: 600; font-family: monospace; }
+  .evt-tool-summary { color: #666; font-family: monospace; font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .evt-tool-count { color: #888; font-size: 0.75rem; font-weight: 600; background: #1a2a3a; padding: 1px 6px; border-radius: 8px; }
+  .evt-group-body { display: none; padding: 4px 0 4px 16px; }
+  .evt-group-body.open { display: block; }
+  .evt-detail-label { color: #555; font-size: 0.7rem; font-family: monospace; margin-top: 4px; }
+  .evt-detail-content { color: #777; font-family: monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+  .evt-detail-result { color: #6b8; font-family: monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+
+  /* Reply input in detail */
+  .detail-reply {
+    border-top: 1px solid #1a1a1a; padding: 10px 16px; flex-shrink: 0;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    background: #0e0e0e;
+  }
+  .detail-reply .file-preview { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .detail-reply .input-row { display: flex; gap: 6px; }
+  .detail-reply input[type="text"] {
+    flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+    padding: 9px 10px; color: #fff; font-size: 0.85rem; outline: none;
+  }
+  .detail-reply input[type="text"]:focus { border-color: #60a5fa; }
+  .detail-reply button {
+    background: #2563eb; color: #fff; border: none; border-radius: 8px;
+    padding: 9px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  }
+  .detail-reply .attach-btn { background: #2a2a2a; color: #aaa; padding: 9px 10px; cursor: pointer; border: none; border-radius: 8px; }
+
+  /* File preview */
+  .file-preview { display: flex; gap: 6px; flex-wrap: wrap; }
+  .file-thumb { position: relative; }
+  .file-thumb img { width: 50px; height: 50px; object-fit: cover; border-radius: 6px; border: 1px solid #333; }
+  .file-thumb .file-icon { width: 50px; height: 50px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 0.55rem; color: #888; text-align: center; padding: 3px; word-break: break-all; }
+  .file-thumb .remove-btn { position: absolute; top: -4px; right: -4px; background: #f87171; color: #fff; border: none; border-radius: 50%; width: 16px; height: 16px; font-size: 0.65rem; cursor: pointer; line-height: 16px; text-align: center; }
+  .output-img { max-width: 100%; border-radius: 8px; margin-top: 8px; border: 1px solid #333; }
+
+  /* Drop overlay */
+  .drop-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(37,99,235,0.15);
+    border: 3px dashed #60a5fa; z-index: 100;
+    align-items: center; justify-content: center; font-size: 1.2rem; color: #60a5fa;
+  }
+  .drop-overlay.active { display: flex; }
+
+  .empty { color: #444; text-align: center; padding: 40px; font-size: 0.9rem; }
+  #loadMore { text-align: center; padding: 16px; }
+  .load-more-text { color: #555; font-size: 0.8rem; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="drop-overlay" id="dropOverlay">ファイルをドロップ</div>
+
+<div class="app">
+  <!-- List Pane -->
+  <div class="list-pane">
+    <div class="list-header">
+      <div class="list-header-row">
+        <h1>Mac Mini</h1>
+        <button class="refresh-btn" onclick="refresh()">更新</button>
+      </div>
+      <div class="status-bar" id="statusBar"><span class="status-pill pill-ok">...</span></div>
+      <div class="search-row">
+        <input id="searchInput" type="text" placeholder="検索..." autocomplete="off">
+      </div>
+    </div>
+    <div class="list-body" id="listBody">
+      <div class="empty">Loading...</div>
+    </div>
+    <div id="loadMore" style="display:none"><span class="load-more-text">読み込み中...</span></div>
+    <div class="list-input">
+      <div class="file-preview" id="mainFilePreview"></div>
+      <div class="input-row">
+        <input id="promptInput" type="text" placeholder="新しいタスク..." autocomplete="off">
+        <button id="sendBtn" onclick="sendTask()">送信</button>
+        <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
+      </div>
+      <input type="file" id="mainFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
+    </div>
+  </div>
+
+  <!-- Detail Pane -->
+  <div class="detail-pane empty-state" id="detailPane">
+    <div class="detail-empty" id="detailEmpty">スレッドを選択</div>
+    <div id="detailContent" style="display:none;flex-direction:column;height:100%;">
+      <div class="detail-header">
+        <button class="detail-back" onclick="closeDetail()">&larr;</button>
+        <div class="detail-title" id="detailTitle"></div>
+        <div class="detail-actions" id="detailActions"></div>
+      </div>
+      <div class="detail-body" id="detailBody"></div>
+      <div class="detail-reply" id="detailReply" style="display:none">
+        <div class="file-preview" id="detailFilePreview"></div>
+        <div class="input-row">
+          <input type="text" id="detailReplyInput" placeholder="続きの指示..." autocomplete="off">
+          <button onclick="sendDetailReply()">返信</button>
+          <button class="attach-btn" onclick="document.getElementById('detailFileInput').click()">+</button>
+        </div>
+        <input type="file" id="detailFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = location.origin;
+const streams = new Map();
+const pendingFiles = [];
+let currentPage = 1;
+let searchQuery = '';
+let allThreads = [];
+let hasMore = true;
+let loadingMore = false;
+let selectedThreadId = null;
+let usersMap = {};
+const detailReplyFiles = [];
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return s + '秒前';
+  if (s < 3600) return Math.floor(s/60) + '分前';
+  if (s < 86400) return Math.floor(s/3600) + '時間前';
+  return Math.floor(s/86400) + '日前';
+}
+
+const IMG_EXTS = ['.png','.jpg','.jpeg','.gif','.webp','.svg'];
+function isImageFile(name) { return IMG_EXTS.some(e => name.toLowerCase().endsWith(e)); }
+
+function renderFileInText(text) {
+  let html = esc(text);
+  html = html.replace(/\/files\/([a-zA-Z0-9._-]+\.(png|jpg|jpeg|gif|webp|svg))/gi, (match) => {
+    return `</span><img class="output-img" src="${match}" loading="lazy"><span class="msg-text">`;
+  });
+  return html;
+}
+
+function formatUser(createdBy) {
+  if (!createdBy) return '(anonymous)';
+  if (createdBy.startsWith('slack:')) {
+    const slackName = createdBy.slice(6);
+    // Check if we have a mapped display name for this slack user
+    const u = usersMap[createdBy];
+    return u?.name || slackName;
+  }
+  const u = usersMap[createdBy];
+  if (u?.name) return u.name;
+  const at = createdBy.indexOf('@');
+  return at > 0 ? createdBy.slice(0, at) : createdBy;
+}
+
+// === Tool rendering ===
+let toolToggleId = 0;
+
+function toolSummary(name, input) {
+  if (!input || typeof input !== 'object') return '';
+  if (name === 'Read' || name === 'Write') return input.file_path || '';
+  if (name === 'Edit') return input.file_path || '';
+  if (name === 'Bash') return (input.command || '').slice(0, 80);
+  if (name === 'Grep') return (input.pattern || '') + (input.path ? ' in ' + input.path : '');
+  if (name === 'Glob') return input.pattern || '';
+  if (name === 'Agent') return (input.prompt || '').slice(0, 60);
+  if (name === 'WebFetch') return input.url || '';
+  if (name === 'WebSearch') return input.query || '';
+  if (name === 'ToolSearch') return input.query || '';
+  for (const v of Object.values(input)) {
+    if (typeof v === 'string' && v.length > 0) return v.slice(0, 80);
+  }
+  return '';
+}
+
+function renderEvents(events) {
+  if (!events || events.length === 0) return '';
+  const items = [];
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e.type === 'text') {
+      items.push({ type: 'text', text: e.text });
+    } else if (e.type === 'tool_use') {
+      const next = events[i + 1];
+      const result = (next && next.type === 'tool_result') ? next.content : null;
+      if (result !== null) i++;
+      items.push({ type: 'tool', name: e.name, input: e.input, result });
+    } else if (e.type === 'tool_result') {
+      items.push({ type: 'tool', name: '(result)', input: null, result: e.content });
+    }
+  }
+  const grouped = [];
+  for (const item of items) {
+    const prev = grouped[grouped.length - 1];
+    if (item.type === 'tool' && prev && prev.type === 'tool_group' && prev.name === item.name) {
+      prev.calls.push(item);
+    } else if (item.type === 'tool') {
+      grouped.push({ type: 'tool_group', name: item.name, calls: [item] });
+    } else {
+      grouped.push(item);
+    }
+  }
+  let html = '';
+  for (const g of grouped) {
+    if (g.type === 'text') {
+      html += `<div class="evt-text"><span class="msg-text">${renderFileInText(g.text)}</span></div>`;
+    } else if (g.type === 'tool_group' && g.calls.length === 1) {
+      html += renderSingleTool(g.calls[0]);
+    } else if (g.type === 'tool_group') {
+      const gid = 'tg-' + (toolToggleId++);
+      html += `<div class="evt-group">
+        <div class="evt-group-header" onclick="toggleTool('${gid}')">
+          <span class="evt-toggle" id="${gid}-arrow">▶</span>
+          <span class="evt-tool-name">${esc(g.name)}</span>
+          <span class="evt-tool-count">×${g.calls.length}</span>
+        </div>
+        <div class="evt-group-body" id="${gid}">
+          ${g.calls.map(c => renderSingleTool(c)).join('')}
+        </div>
+      </div>`;
+    }
+  }
+  return html;
+}
+
+function renderSingleTool(item) {
+  const tid = 'tg-' + (toolToggleId++);
+  const summary = esc(toolSummary(item.name, item.input));
+  const inputStr = item.input ? (typeof item.input === 'string' ? item.input : JSON.stringify(item.input, null, 1)) : '';
+  const resultStr = item.result || '';
+  return `<div class="evt-group">
+    <div class="evt-group-header" onclick="toggleTool('${tid}')">
+      <span class="evt-toggle" id="${tid}-arrow">▶</span>
+      <span class="evt-tool-name">${esc(item.name)}</span>
+      <span class="evt-tool-summary">${summary}</span>
+    </div>
+    <div class="evt-group-body" id="${tid}">
+      ${inputStr ? `<div class="evt-detail-label">input</div><div class="evt-detail-content">${esc(inputStr.slice(0, 2000))}</div>` : ''}
+      ${resultStr ? `<div class="evt-detail-label">output</div><div class="evt-detail-result">${esc(resultStr.slice(0, 2000))}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function toggleTool(id) {
+  const body = document.getElementById(id);
+  const arrow = document.getElementById(id + '-arrow');
+  if (!body) return;
+  body.classList.toggle('open');
+  arrow?.classList.toggle('open');
+}
+
+// === List: compact thread item ===
+function getThreadStatus(t) {
+  if (t.replies?.length) {
+    const last = t.replies[t.replies.length - 1];
+    return last.status;
+  }
+  return t.status;
+}
+
+function getThreadTime(t) {
+  if (t.replies?.length) {
+    const last = t.replies[t.replies.length - 1];
+    return last.completedAt || last.startedAt;
+  }
+  return t.completedAt || t.startedAt;
+}
+
+function renderThreadItem(t) {
+  const status = getThreadStatus(t);
+  const time = getThreadTime(t);
+  const user = formatUser(t.createdBy);
+  const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '[file]').slice(0, 80);
+  const replyCount = t.replies?.length || 0;
+  const active = t.id === selectedThreadId ? ' active' : '';
+
+  return `<div class="thread-item${active}" onclick="openThread('${t.id}')">
+    <div class="thread-item-header">
+      <span class="thread-item-user">${esc(user)}</span>
+      <span class="thread-item-time">${timeAgo(time)}</span>
+    </div>
+    <div class="thread-item-prompt">${esc(prompt)}</div>
+    <div class="thread-item-footer">
+      <span class="badge badge-${status}">${status}</span>
+      ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
+    </div>
+  </div>`;
+}
+
+// === Detail: full thread messages ===
+function renderDetailMsg(t, isReply) {
+  const badge = `<span class="badge badge-${t.status}">${t.status}</span>`;
+  const meta = `<span class="task-id">${t.id}</span> ${badge}`;
+  const timeStr = t.completedAt ? timeAgo(t.completedAt) : timeAgo(t.startedAt);
+  const userName = formatUser(t.createdBy);
+  const userLabel = isReply ? `↩ ${esc(userName)}` : esc(userName);
+
+  let promptHtml = esc(t.prompt);
+  const promptFiles = t.prompt.match(/\/files\/([a-zA-Z0-9._-]+)/g) || [];
+  let attachHtml = '';
+  if (promptFiles.length > 0) {
+    attachHtml = '<div class="file-preview" style="margin-top:6px">';
+    for (const ref of promptFiles) {
+      const fname = ref.split('/').pop();
+      if (isImageFile(fname)) {
+        attachHtml += `<div class="file-thumb"><img src="${ref}" alt="${esc(fname)}"></div>`;
+      } else {
+        attachHtml += `<div class="file-thumb"><div class="file-icon">${esc(fname)}</div></div>`;
+      }
+    }
+    attachHtml += '</div>';
+  }
+
+  const rc = isReply ? ' msg-reply' : '';
+  let html = `<div class="msg msg-user${rc}">
+    <div class="msg-meta"><span class="msg-role msg-role-user">${userLabel}</span> <span class="time">${timeStr}</span></div>
+    <div class="msg-text">${promptHtml}</div>${attachHtml}
+  </div>`;
+
+  if (t.status === 'running') {
+    html += `<div class="msg msg-assistant msg-reply">
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div id="events-${t.id}">${t.events ? renderEvents(t.events) : '<div class="msg-text stream-text">考え中...</div>'}</div>
+    </div>`;
+    startStream(t.id);
+  } else if (t.events && t.events.length > 0) {
+    const retryable = ['failed','interrupted','cancelled','max_turns'].includes(t.status);
+    html += `<div class="msg msg-assistant msg-reply">
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div>${renderEvents(t.events)}</div>
+      ${t.error ? `<div class="msg-text error-text">${esc(String(t.error).slice(0, 500))}</div>` : ''}
+      ${t.status === 'max_turns' ? `<button class="retry-btn" onclick="retryTask('${t.id}')">続行 (max turns到達)</button>` : retryable ? `<button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>` : ''}
+    </div>`;
+  } else if (t.result) {
+    html += `<div class="msg msg-assistant msg-reply">
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-text">${renderFileInText(String(t.result).slice(0, 4000))}</div>
+    </div>`;
+  } else if (t.error) {
+    html += `<div class="msg msg-assistant msg-reply">
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-text error-text">${esc(String(t.error).slice(0, 500))}</div>
+      <button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>
+    </div>`;
+  } else if (['interrupted','cancelled'].includes(t.status)) {
+    html += `<div class="msg msg-assistant msg-reply">
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-text stream-text">(中断されました)</div>
+      <button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>
+    </div>`;
+  }
+  return html;
+}
+
+function renderDetail(t) {
+  if (!t) return;
+  selectedThreadId = t.id;
+  const pane = document.getElementById('detailPane');
+  const content = document.getElementById('detailContent');
+  const empty = document.getElementById('detailEmpty');
+
+  pane.classList.remove('empty-state');
+  pane.classList.add('open');
+  content.style.display = 'flex';
+  empty.style.display = 'none';
+
+  // Title
+  const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '').trim().slice(0, 60);
+  document.getElementById('detailTitle').textContent = prompt || '(タスク)';
+
+  // Action buttons
+  const hasRunning = t.status === 'running' || t.replies?.some(r => r.status === 'running');
+  const runningId = hasRunning ? (t.replies?.find(r => r.status === 'running')?.id || (t.status === 'running' ? t.id : null)) : null;
+  let actionsHtml = '';
+  if (runningId) {
+    actionsHtml = `<button class="detail-cancel-btn" onclick="cancelTask('${runningId}')">キャンセル</button>`;
+  }
+  const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
+  if (!hasRunning && t.worktreeChanges) {
+    actionsHtml += `<div class="wt-changes">
+      <div class="wt-changes-summary">${t.worktreeChanges.files.length}ファイル変更あり</div>
+      <button class="wt-btn wt-merge" onclick="mergeTask('${lastTaskId}')">mainにマージ</button>
+      <button class="wt-btn wt-pr" onclick="createPr('${lastTaskId}')">PR作成</button>
+      <button class="wt-btn wt-discard" onclick="discardChanges('${lastTaskId}')">破棄</button>
+    </div>`;
+  }
+  document.getElementById('detailActions').innerHTML = actionsHtml;
+
+  // Messages
+  let html = renderDetailMsg(t, false);
+  if (t.replies) {
+    for (const r of t.replies) html += renderDetailMsg(r, true);
+  }
+  document.getElementById('detailBody').innerHTML = html;
+
+  // Reply input - show for any completed/non-running thread
+  const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
+  const replyEl = document.getElementById('detailReply');
+  if (!hasRunning && ['completed', 'failed', 'interrupted', 'cancelled', 'max_turns'].includes(last.status)) {
+    replyEl.style.display = '';
+    replyEl.dataset.taskId = last.id;
+  } else {
+    replyEl.style.display = 'none';
+  }
+
+  // Scroll to bottom
+  const body = document.getElementById('detailBody');
+  body.scrollTop = body.scrollHeight;
+
+  // Re-render list to update active state
+  renderList();
+}
+
+function closeDetail() {
+  selectedThreadId = null;
+  const pane = document.getElementById('detailPane');
+  pane.classList.add('empty-state');
+  pane.classList.remove('open');
+  document.getElementById('detailContent').style.display = 'none';
+  document.getElementById('detailEmpty').style.display = '';
+  renderList();
+}
+
+function openThread(id) {
+  const t = allThreads.find(t => t.id === id);
+  if (t) renderDetail(t);
+}
+
+// === Streaming ===
+function startStream(taskId) {
+  if (streams.has(taskId)) return;
+  const es = new EventSource(API + '/task/' + taskId + '/stream');
+  streams.set(taskId, es);
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const el = document.getElementById('events-' + taskId);
+      if (el && data.events && data.events.length > 0) {
+        el.innerHTML = renderEvents(data.events);
+      } else if (el && data.output) {
+        el.innerHTML = `<div class="msg-text">${esc(data.output)}</div>`;
+      }
+      if (data.status !== 'running') {
+        es.close();
+        streams.delete(taskId);
+        setTimeout(refresh, 500);
+      }
+    } catch {}
+  };
+  es.onerror = () => { es.close(); streams.delete(taskId); };
+}
+
+// === Data loading ===
+function renderList() {
+  const list = document.getElementById('listBody');
+  if (!allThreads.length) {
+    list.innerHTML = '<div class="empty">タスクなし</div>';
+  } else {
+    list.innerHTML = allThreads.map(t => renderThreadItem(t)).join('');
+  }
+}
+
+async function refresh() {
+  currentPage = 1;
+  allThreads = [];
+  hasMore = true;
+  await loadPage(true);
+}
+
+async function loadPage(isRefresh) {
+  try {
+    const params = new URLSearchParams({ page: currentPage, limit: 20 });
+    if (searchQuery) params.set('q', searchQuery);
+
+    const fetches = [fetch(API + '/tasks?' + params).then(r => r.json())];
+    if (isRefresh) fetches.push(fetch(API + '/status').then(r => r.json()));
+    const results = await Promise.all(fetches);
+    const data = results[0];
+
+    if (isRefresh && results[1]) {
+      const status = results[1];
+      document.getElementById('statusBar').innerHTML = `
+        <span class="status-pill pill-ok">OK</span>
+        <span class="status-pill pill-running">${status.tasks.running} running</span>
+        <span class="status-pill pill-count">${status.tasks.total} total</span>
+      `;
+    }
+
+    if (data.users) usersMap = { ...usersMap, ...data.users };
+
+    const newThreads = data.threads || [];
+    hasMore = data.page < data.totalPages;
+
+    if (isRefresh) {
+      allThreads = newThreads;
+    } else {
+      const existingIds = new Set(allThreads.map(t => t.id));
+      for (const t of newThreads) {
+        if (!existingIds.has(t.id)) allThreads.push(t);
+      }
+    }
+
+    renderList();
+    document.getElementById('loadMore').style.display = hasMore ? '' : 'none';
+
+    // Refresh detail pane if selected thread is in the data
+    if (selectedThreadId) {
+      const updated = allThreads.find(t => t.id === selectedThreadId);
+      if (updated) renderDetail(updated);
+    }
+  } catch (e) {
+    document.getElementById('statusBar').innerHTML = '<span class="status-pill" style="background:#3a1a1a;color:#f87171">Offline</span>';
+  }
+}
+
+async function loadNextPage() {
+  if (loadingMore || !hasMore) return;
+  loadingMore = true;
+  document.getElementById('loadMore').style.display = '';
+  currentPage++;
+  await loadPage(false);
+  loadingMore = false;
+}
+
+document.getElementById('listBody').addEventListener('scroll', (e) => {
+  const el = e.target;
+  if (loadingMore || !hasMore) return;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) loadNextPage();
+});
+
+// === File upload ===
+async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(API + '/upload', { method: 'POST', body: formData });
+  return await res.json();
+}
+
+async function uploadBase64(data, filename) {
+  const res = await fetch(API + '/upload', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data, filename }),
+  });
+  return await res.json();
+}
+
+// === Main input files ===
+function renderMainPreview() {
+  const el = document.getElementById('mainFilePreview');
+  if (pendingFiles.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = pendingFiles.map((f, i) => {
+    const thumb = f.isImage ? `<img src="${f.url}" alt="${esc(f.name)}">` : `<div class="file-icon">${esc(f.name)}</div>`;
+    return `<div class="file-thumb">${thumb}<button class="remove-btn" onclick="pendingFiles.splice(${i},1);renderMainPreview()">×</button></div>`;
+  }).join('');
+}
+
+document.getElementById('mainFileInput').addEventListener('change', async (e) => {
+  for (const file of e.target.files) {
+    const res = await uploadFile(file);
+    if (res.name) pendingFiles.push({ name: res.name, url: res.url, isImage: isImageFile(res.name) });
+  }
+  e.target.value = '';
+  renderMainPreview();
+});
+
+// === Detail reply files ===
+function renderDetailFilePreview() {
+  const el = document.getElementById('detailFilePreview');
+  if (detailReplyFiles.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = detailReplyFiles.map((f, i) => {
+    const thumb = f.isImage ? `<img src="${f.url}" alt="${esc(f.name)}">` : `<div class="file-icon">${esc(f.name)}</div>`;
+    return `<div class="file-thumb">${thumb}<button class="remove-btn" onclick="detailReplyFiles.splice(${i},1);renderDetailFilePreview()">×</button></div>`;
+  }).join('');
+}
+
+document.getElementById('detailFileInput').addEventListener('change', async (e) => {
+  for (const file of e.target.files) {
+    const res = await uploadFile(file);
+    if (res.name) detailReplyFiles.push({ name: res.name, url: res.url, isImage: isImageFile(res.name) });
+  }
+  e.target.value = '';
+  renderDetailFilePreview();
+});
+
+// === Paste handlers ===
+document.getElementById('promptInput').addEventListener('paste', async (e) => {
+  for (const item of (e.clipboardData?.items || [])) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const ext = blob.type.split('/')[1] || 'png';
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const res = await uploadBase64(reader.result.split(',')[1], `paste.${ext}`);
+        if (res.name) { pendingFiles.push({ name: res.name, url: res.url, isImage: true }); renderMainPreview(); }
+      };
+      reader.readAsDataURL(blob);
+    }
+  }
+});
+
+document.getElementById('detailReplyInput').addEventListener('paste', async (e) => {
+  for (const item of (e.clipboardData?.items || [])) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const ext = blob.type.split('/')[1] || 'png';
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const res = await uploadBase64(reader.result.split(',')[1], `paste.${ext}`);
+        if (res.name) { detailReplyFiles.push({ name: res.name, url: res.url, isImage: true }); renderDetailFilePreview(); }
+      };
+      reader.readAsDataURL(blob);
+    }
+  }
+});
+
+// === Drag & drop ===
+let dragCounter = 0;
+document.addEventListener('dragenter', (e) => { e.preventDefault(); dragCounter++; document.getElementById('dropOverlay').classList.add('active'); });
+document.addEventListener('dragleave', (e) => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; document.getElementById('dropOverlay').classList.remove('active'); } });
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', async (e) => {
+  e.preventDefault(); dragCounter = 0;
+  document.getElementById('dropOverlay').classList.remove('active');
+  for (const file of e.dataTransfer.files) {
+    const res = await uploadFile(file);
+    if (res.name) pendingFiles.push({ name: res.name, url: res.url, isImage: isImageFile(res.name) });
+  }
+  renderMainPreview();
+});
+
+// === Send new task ===
+let sending = false;
+async function sendTask() {
+  if (sending) return;
+  const input = document.getElementById('promptInput');
+  const btn = document.getElementById('sendBtn');
+  const prompt = input.value.trim();
+  if (!prompt && pendingFiles.length === 0) return;
+  sending = true; btn.disabled = true;
+  try {
+    const files = pendingFiles.map(f => f.name);
+    const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30 };
+    if (files.length > 0) body.files = files;
+    await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    input.value = '';
+    pendingFiles.length = 0;
+    renderMainPreview();
+    setTimeout(refresh, 500);
+  } catch (e) { alert('送信失敗: ' + e.message); }
+  finally { sending = false; btn.disabled = false; }
+}
+
+// === Send reply in detail ===
+const replyLock = { active: false };
+async function sendDetailReply() {
+  if (replyLock.active) return;
+  const taskId = document.getElementById('detailReply').dataset.taskId;
+  if (!taskId) return;
+  const input = document.getElementById('detailReplyInput');
+  const prompt = input.value.trim();
+  const files = detailReplyFiles.map(f => f.name);
+  if (!prompt && files.length === 0) return;
+  replyLock.active = true;
+  try {
+    const body = { prompt: prompt || '添付ファイルを確認してください' };
+    if (files.length > 0) body.files = files;
+    await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    input.value = '';
+    detailReplyFiles.length = 0;
+    renderDetailFilePreview();
+    setTimeout(refresh, 500);
+  } catch (e) { alert('送信失敗: ' + e.message); }
+  finally { replyLock.active = false; }
+}
+
+async function retryTask(taskId) {
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/retry', { method: 'POST' });
+    if (!res.ok) { const e = await res.json(); alert(e.error || '再実行失敗'); return; }
+    setTimeout(refresh, 500);
+  } catch (e) { alert('再実行失敗: ' + e.message); }
+}
+
+async function cancelTask(taskId) {
+  try {
+    await fetch(API + '/task/' + taskId, { method: 'DELETE' });
+    setTimeout(refresh, 500);
+  } catch (e) { alert('キャンセル失敗: ' + e.message); }
+}
+
+async function mergeTask(taskId) {
+  if (!confirm('mainにマージしますか？')) return;
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/merge', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'マージ失敗'); return; }
+    alert('マージ完了: ' + (data.commit || '').slice(0, 7));
+    setTimeout(refresh, 500);
+  } catch (e) { alert('マージ失敗: ' + e.message); }
+}
+
+async function createPr(taskId) {
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/pr', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }
+    alert('PR作成完了');
+    if (data.prUrl) window.open(data.prUrl, '_blank');
+    setTimeout(refresh, 500);
+  } catch (e) { alert('PR作成失敗: ' + e.message); }
+}
+
+async function discardChanges(taskId) {
+  if (!confirm('変更を破棄しますか？この操作は取り消せません。')) return;
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/discard', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '破棄失敗'); return; }
+    setTimeout(refresh, 500);
+  } catch (e) { alert('破棄失敗: ' + e.message); }
+}
+
+// === Keyboard ===
+document.getElementById('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) sendTask(); });
+document.getElementById('detailReplyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) sendDetailReply(); });
+document.getElementById('searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { searchQuery = e.target.value.trim(); currentPage = 1; refresh(); } });
+
+// === Init ===
+refresh();
+setInterval(() => { if (!streams.size) refresh(); }, 5000);
+</script>
+</body>
+</html>
