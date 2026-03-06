@@ -359,7 +359,12 @@ export function registerRoutes(app, ctx) {
     return c.json({
       tmuxSessions: tmuxSessions.split("\n"),
       claudeProcesses: claudeProcesses.split("\n").filter(Boolean),
-      tasks: { total, running: runningPids.size, completed: statusCounts.completed || 0, failed: statusCounts.failed || 0 },
+      tasks: {
+        total, running: runningPids.size,
+        completed: statusCounts.completed || 0, failed: statusCounts.failed || 0,
+        done: db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL AND parent_id IS NULL`).get().c,
+        waiting: db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE t.parent_id IS NULL AND t.closed_at IS NULL AND t.status != 'running' AND NOT EXISTS (SELECT 1 FROM tasks r WHERE r.root_id = t.id AND r.status = 'running')`).get().c,
+      },
       worktrees: worktreeCount,
       uptime: process.uptime(),
     });
@@ -382,5 +387,55 @@ export function registerRoutes(app, ctx) {
       return c.json({ error: err.message }, 500);
     }
     return c.json({ removed, message: `${removed} worktree(s) cleaned up` });
+  });
+
+  // --- Logs ---
+  const LOG_SOURCES = {
+    "webhook-server": "webhook-server",
+    "task-runner": "task-runner",
+    "deploy": "deploy",
+  };
+
+  app.get("/logs", (c) => {
+    const source = c.req.query("source") || "webhook-server";
+    const lines = parseInt(c.req.query("lines") || "200", 10);
+
+    if (!LOG_SOURCES[source]) {
+      return c.json({ error: `unknown source: ${source}` }, 400);
+    }
+
+    let content = "";
+    try {
+      if (source === "deploy") {
+        const logPath = join(process.env.HOME || "", "logs", "deploy.log");
+        if (existsSync(logPath)) {
+          content = readFileSync(logPath, "utf-8").split("\n").slice(-lines).join("\n");
+        } else {
+          content = "(deploy.log not found)";
+        }
+      } else if (source === "webhook-server" || source === "task-runner") {
+        try {
+          content = execSync(
+            `tmux capture-pane -t ${source} -p -S -${lines} 2>/dev/null || echo "(session not found)"`,
+            { encoding: "utf-8", timeout: 5000 }
+          );
+        } catch {
+          content = `(tmux session '${source}' not available)`;
+        }
+      }
+    } catch (err) {
+      content = `Error: ${err.message}`;
+    }
+
+    return c.json({ source, content, lines });
+  });
+
+  app.get("/logs/sources", (c) => {
+    const sources = [
+      { id: "webhook-server", name: "Webhook Server", type: "tmux" },
+      { id: "task-runner", name: "Task Runner", type: "tmux" },
+      { id: "deploy", name: "Deploy Log", type: "file" },
+    ];
+    return c.json(sources);
   });
 }

@@ -47,10 +47,22 @@
   .pill-ok { background: #1a3a1a; color: #4ade80; }
   .pill-running { background: #1a2a3a; color: #60a5fa; }
   .pill-count { background: #2a2a2a; color: #aaa; }
+  .pill-waiting { background: #3a3a1a; color: #fbbf24; }
+  .pill-done { background: #1a1a2a; color: #888; }
   .search-row { display: flex; gap: 6px; }
   .search-row input { flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; padding: 7px 10px; color: #fff; font-size: 0.8rem; outline: none; }
   .search-row input:focus { border-color: #60a5fa; }
   .refresh-btn { background: none; border: 1px solid #2a2a2a; color: #666; border-radius: 8px; padding: 3px 10px; font-size: 0.75rem; cursor: pointer; }
+
+  /* List tabs */
+  .list-tabs { display: flex; border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
+  .list-tab {
+    flex: 1; padding: 8px 0; text-align: center; font-size: 0.75rem; font-weight: 600;
+    color: #555; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s;
+  }
+  .list-tab:hover { color: #aaa; }
+  .list-tab.active { color: #e0e0e0; border-bottom-color: #60a5fa; }
+  .list-tab .tab-count { font-weight: 400; color: #555; margin-left: 4px; }
 
   .list-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
@@ -71,6 +83,8 @@
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
   .badge-running { background: #1e3a5f; color: #60a5fa; animation: pulse 1.5s infinite; }
   .badge-completed { background: #1a3a1a; color: #4ade80; }
+  .badge-waiting { background: #3a3a1a; color: #fbbf24; }
+  .badge-done { background: #1a3a1a; color: #4ade80; }
   .badge-failed { background: #3a1a1a; color: #f87171; }
   .badge-cancelled { background: #3a3a1a; color: #fbbf24; }
   .badge-interrupted { background: #2a2a2a; color: #888; }
@@ -114,6 +128,9 @@
   .wt-merge { background: #1a3a1a; color: #4ade80; }
   .wt-pr { background: #1a2a3a; color: #60a5fa; }
   .wt-discard { background: #2a2a2a; color: #888; }
+  .wt-done { background: #1a3a1a; color: #4ade80; border: 1px solid #2a4a2a; }
+  .wt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .thread-item.closed { opacity: 0.5; }
 
   .detail-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0; }
 
@@ -199,12 +216,19 @@
     <div class="list-header">
       <div class="list-header-row">
         <h1>Mac Mini</h1>
-        <button class="refresh-btn" onclick="refresh()">更新</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <a href="/logs-viewer" style="color:#666;font-size:0.7rem;text-decoration:none;border:1px solid #2a2a2a;border-radius:6px;padding:3px 8px">Logs</a>
+          <button class="refresh-btn" onclick="refresh()">更新</button>
+        </div>
       </div>
       <div class="status-bar" id="statusBar"><span class="status-pill pill-ok">...</span></div>
       <div class="search-row">
         <input id="searchInput" type="text" placeholder="検索..." autocomplete="off">
       </div>
+    </div>
+    <div class="list-tabs">
+      <div class="list-tab active" id="tabActive" onclick="switchTab('active')">Active<span class="tab-count" id="tabActiveCount"></span></div>
+      <div class="list-tab" id="tabDone" onclick="switchTab('done')">Done<span class="tab-count" id="tabDoneCount"></span></div>
     </div>
     <div class="list-body" id="listBody">
       <div class="empty">Loading...</div>
@@ -255,6 +279,9 @@ let hasMore = true;
 let loadingMore = false;
 let selectedThreadId = null;
 let usersMap = {};
+let currentTab = 'active'; // 'active' or 'done'
+let doneCount = 0;
+let activeCount = 0;
 const detailReplyFiles = [];
 
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -391,11 +418,11 @@ function toggleTool(id) {
 
 // === List: compact thread item ===
 function getThreadStatus(t) {
-  if (t.replies?.length) {
-    const last = t.replies[t.replies.length - 1];
-    return last.status;
-  }
-  return t.status;
+  const rawStatus = t.replies?.length ? t.replies[t.replies.length - 1].status : t.status;
+  if (t.closedAt) return 'done';
+  // Non-running finished states → "waiting for user reply"
+  if (['completed', 'max_turns'].includes(rawStatus)) return 'waiting';
+  return rawStatus;
 }
 
 function getThreadTime(t) {
@@ -413,23 +440,27 @@ function renderThreadItem(t) {
   const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '[file]').slice(0, 80);
   const replyCount = t.replies?.length || 0;
   const active = t.id === selectedThreadId ? ' active' : '';
+  const closed = t.closedAt ? ' closed' : '';
 
-  return `<div class="thread-item${active}" onclick="openThread('${t.id}')">
+  return `<div class="thread-item${active}${closed}" onclick="openThread('${t.id}')">
     <div class="thread-item-header">
       <span class="thread-item-user">${esc(user)}</span>
       <span class="thread-item-time">${timeAgo(time)}</span>
     </div>
     <div class="thread-item-prompt">${esc(prompt)}</div>
     <div class="thread-item-footer">
-      <span class="badge badge-${status}">${status}</span>
+      <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
     </div>
   </div>`;
 }
 
 // === Detail: full thread messages ===
-function renderDetailMsg(t, isReply) {
-  const badge = `<span class="badge badge-${t.status}">${t.status}</span>`;
+function renderDetailMsg(t, isReply, isLast) {
+  // Only show badge on the last task, or running/failed tasks
+  const showBadge = isLast || t.status === 'running' || ['failed','interrupted','cancelled'].includes(t.status);
+  const displayStatus = (!isLast && ['completed','max_turns'].includes(t.status)) ? null : t.status;
+  const badge = showBadge && displayStatus ? `<span class="badge badge-${displayStatus}">${displayStatus === 'completed' ? '返信待ち' : displayStatus === 'max_turns' ? '返信待ち' : displayStatus}</span>` : '';
   const meta = `<span class="task-id">${t.id}</span> ${badge}`;
   const timeStr = t.completedAt ? timeAgo(t.completedAt) : timeAgo(t.startedAt);
   const userName = formatUser(t.createdBy);
@@ -516,27 +547,36 @@ function renderDetail(t) {
     actionsHtml = `<button class="detail-cancel-btn" onclick="cancelTask('${runningId}')">キャンセル</button>`;
   }
   const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
-  if (!hasRunning && t.worktreeChanges) {
-    actionsHtml += `<div class="wt-changes">
-      <div class="wt-changes-summary">${t.worktreeChanges.files.length}ファイル変更あり</div>
-      <button class="wt-btn wt-merge" onclick="mergeTask('${lastTaskId}')">mainにマージ</button>
-      <button class="wt-btn wt-pr" onclick="createPr('${lastTaskId}')">PR作成</button>
-      <button class="wt-btn wt-discard" onclick="discardChanges('${lastTaskId}')">破棄</button>
-    </div>`;
+  if (!hasRunning && !t.closedAt) {
+    if (t.worktreeChanges) {
+      actionsHtml += `<div class="wt-changes">
+        <div class="wt-changes-summary">${t.worktreeChanges.files.length}ファイル変更あり</div>
+        <button class="wt-btn wt-merge" onclick="mergeTask('${lastTaskId}')">mainにマージ</button>
+        <button class="wt-btn wt-pr" onclick="createPr('${lastTaskId}')">PR作成</button>
+        <button class="wt-btn wt-discard" onclick="discardChanges('${lastTaskId}')">破棄</button>
+      </div>`;
+    } else {
+      actionsHtml += `<button class="wt-btn wt-done" onclick="closeThreadUI('${lastTaskId}', this)">Done</button>`;
+    }
+  }
+  if (t.closedAt) {
+    actionsHtml += `<span class="badge badge-done">done</span>`;
   }
   document.getElementById('detailActions').innerHTML = actionsHtml;
 
   // Messages
-  let html = renderDetailMsg(t, false);
-  if (t.replies) {
-    for (const r of t.replies) html += renderDetailMsg(r, true);
+  const allTasks = [t, ...(t.replies || [])];
+  let html = '';
+  for (let i = 0; i < allTasks.length; i++) {
+    const isLast = i === allTasks.length - 1;
+    html += renderDetailMsg(allTasks[i], i > 0, isLast);
   }
   document.getElementById('detailBody').innerHTML = html;
 
   // Reply input - show for any completed/non-running thread
   const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
   const replyEl = document.getElementById('detailReply');
-  if (!hasRunning && ['completed', 'failed', 'interrupted', 'cancelled', 'max_turns'].includes(last.status)) {
+  if (!hasRunning && !t.closedAt && ['completed', 'failed', 'interrupted', 'cancelled', 'max_turns'].includes(last.status)) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
   } else {
@@ -611,6 +651,7 @@ async function loadPage(isRefresh) {
   try {
     const params = new URLSearchParams({ page: currentPage, limit: 20 });
     if (searchQuery) params.set('q', searchQuery);
+    if (currentTab === 'done') params.set('closed', '1');
 
     const fetches = [fetch(API + '/tasks?' + params).then(r => r.json())];
     if (isRefresh) fetches.push(fetch(API + '/status').then(r => r.json()));
@@ -619,11 +660,16 @@ async function loadPage(isRefresh) {
 
     if (isRefresh && results[1]) {
       const status = results[1];
+      doneCount = status.tasks.done || 0;
+      activeCount = status.tasks.total - doneCount;
+      const waitingCount = status.tasks.waiting || 0;
       document.getElementById('statusBar').innerHTML = `
-        <span class="status-pill pill-ok">OK</span>
-        <span class="status-pill pill-running">${status.tasks.running} running</span>
+        ${status.tasks.running > 0 ? `<span class="status-pill pill-running">${status.tasks.running} running</span>` : ''}
+        <span class="status-pill pill-waiting">${waitingCount} 返信待ち</span>
         <span class="status-pill pill-count">${status.tasks.total} total</span>
+        <span class="status-pill pill-done">${doneCount} done</span>
       `;
+      updateTabCounts();
     }
 
     if (data.users) usersMap = { ...usersMap, ...data.users };
@@ -837,7 +883,8 @@ async function mergeTask(taskId) {
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'マージ失敗'); return; }
     alert('マージ完了: ' + (data.commit || '').slice(0, 7));
-    setTimeout(refresh, 500);
+    closeDetail();
+    refresh();
   } catch (e) { alert('マージ失敗: ' + e.message); }
 }
 
@@ -846,10 +893,34 @@ async function createPr(taskId) {
     const res = await fetch(API + '/task/' + taskId + '/pr', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }
-    alert('PR作成完了');
     if (data.prUrl) window.open(data.prUrl, '_blank');
-    setTimeout(refresh, 500);
+    closeDetail();
+    refresh();
   } catch (e) { alert('PR作成失敗: ' + e.message); }
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabActive').classList.toggle('active', tab === 'active');
+  document.getElementById('tabDone').classList.toggle('active', tab === 'done');
+  refresh();
+}
+
+function updateTabCounts() {
+  document.getElementById('tabActiveCount').textContent = activeCount > 0 ? ` (${activeCount})` : '';
+  document.getElementById('tabDoneCount').textContent = doneCount > 0 ? ` (${doneCount})` : '';
+}
+
+async function closeThreadUI(taskId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/close', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'クローズ失敗'); if (btn) { btn.disabled = false; btn.textContent = 'Done'; } return; }
+    // Remove from active list immediately, close detail
+    closeDetail();
+    refresh();
+  } catch (e) { alert('クローズ失敗: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = 'Done'; } }
 }
 
 async function discardChanges(taskId) {
@@ -858,7 +929,8 @@ async function discardChanges(taskId) {
     const res = await fetch(API + '/task/' + taskId + '/discard', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || '破棄失敗'); return; }
-    setTimeout(refresh, 500);
+    closeDetail();
+    refresh();
   } catch (e) { alert('破棄失敗: ' + e.message); }
 }
 
