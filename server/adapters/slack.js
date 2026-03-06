@@ -12,7 +12,7 @@ const { App: SlackApp, LogLevel } = pkg;
 export function registerSlack(app, ctx) {
   const { stmts, userStmts, runner, worktrees, config } = ctx;
   const { runClaudeSync, runningPids } = runner;
-  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest } = worktrees;
+  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const REPO_DIR = config.repoDir;
   const MAX_TURNS = config.maxTurns;
@@ -96,30 +96,44 @@ export function registerSlack(app, ctx) {
     const threadTs = event.thread_ts || event.ts;
     const taskKey = `${event.channel}-${threadTs}`;
 
-    // Handle worktree merge/PR/discard commands
+    // Handle worktree merge/PR/discard/done commands
     const isMergeCmd = /^(マージ(して|する|お願い)?|merge)$/i.test(prompt.trim());
     const isPrCmd = /^(pr(作|を)?[っ作]?[てる]|pr作成|create pr)$/i.test(prompt.trim());
     const isDiscardCmd = /^(破棄(して|する)?|discard)$/i.test(prompt.trim());
+    const isDoneCmd = /^(done|完了|閉じ(て|る))$/i.test(prompt.trim());
+
+    if (isDoneCmd) {
+      const prevTask = stmts.lastBySlackThread.get(taskKey);
+      if (prevTask) {
+        const rootId = prevTask.root_id || prevTask.id;
+        closeThread(rootId);
+        await say({ text: "スレッドを完了しました。", thread_ts: threadTs });
+      } else {
+        await say({ text: "対象のタスクが見つかりません。", thread_ts: threadTs });
+      }
+      return;
+    }
 
     if (isMergeCmd || isPrCmd || isDiscardCmd) {
       const prevTask = stmts.lastBySlackThread.get(taskKey);
       if (prevTask?.cwd) {
+        const rootId = prevTask.root_id || prevTask.id;
         const changes = getWorktreeChanges(prevTask.cwd);
         if (!changes) {
-          await say({ text: "変更はありません。", thread_ts: threadTs });
+          closeThread(rootId);
+          await say({ text: "変更はありません。スレッドを完了しました。", thread_ts: threadTs });
           return;
         }
         if (isDiscardCmd) {
-          const rootId = prevTask.root_id || prevTask.id;
-          removeWorktree(rootId);
+          closeThread(rootId);
           await say({ text: "変更を破棄しました。", thread_ts: threadTs });
           return;
         }
         if (isMergeCmd) {
-          const message = `task(${prevTask.root_id || prevTask.id}): ${prevTask.prompt.slice(0, 60)}`;
-          const result = commitAndMergeToMain(prevTask.cwd, prevTask.root_id || prevTask.id, message);
+          const message = `task(${rootId}): ${prevTask.prompt.slice(0, 60)}`;
+          const result = commitAndMergeToMain(prevTask.cwd, rootId, message);
           if (result.ok) {
-            removeWorktree(prevTask.root_id || prevTask.id);
+            closeThread(rootId);
             await say({ text: `mainにマージしました (${result.commit.slice(0, 7)})`, thread_ts: threadTs });
           } else {
             await say({ text: `マージに失敗しました:\n\`\`\`${result.error.slice(0, 500)}\`\`\``, thread_ts: threadTs });
@@ -127,10 +141,11 @@ export function registerSlack(app, ctx) {
           return;
         }
         if (isPrCmd) {
-          const title = `task(${prevTask.root_id || prevTask.id}): ${prevTask.prompt.slice(0, 60)}`;
+          const title = `task(${rootId}): ${prevTask.prompt.slice(0, 60)}`;
           const body = `## Changes\n${changes.files.map(f => '- ' + f).join('\n')}`;
-          const result = createPullRequest(prevTask.cwd, prevTask.root_id || prevTask.id, title, body);
+          const result = createPullRequest(prevTask.cwd, rootId, title, body);
           if (result.ok) {
+            closeThread(rootId);
             await say({ text: `PRを作成しました: ${result.prUrl}`, thread_ts: threadTs });
           } else {
             await say({ text: `PR作成に失敗しました:\n\`\`\`${result.error.slice(0, 500)}\`\`\``, thread_ts: threadTs });

@@ -34,17 +34,17 @@ export async function createApp(config) {
     return c.json({ error: "internal server error", detail: err.message }, 500);
   });
 
-  // --- Initialize worktree manager ---
-  const worktrees = createWorktreeManager({
-    repoDir,
-    worktreeBase: config.worktreeBase,
-  });
-
-  // --- Initialize database ---
+  // --- Initialize database first, then worktree manager (needs db for closeThread) ---
   const { db, stmts, userStmts, taskToJson } = createDatabase(config.dbPath, {
     getRunningPids: () => runner.runningPids,
     getLiveOutputs: () => runner.liveOutputs,
-    getWorktreeChanges: worktrees.getWorktreeChanges,
+    getWorktreeChanges: (cwd) => worktrees.getWorktreeChanges(cwd),
+  });
+
+  const worktrees = createWorktreeManager({
+    repoDir,
+    worktreeBase: config.worktreeBase,
+    stmts,
   });
 
   // --- Initialize Claude runner ---
@@ -89,13 +89,24 @@ export async function createApp(config) {
   // --- Dashboard route ---
   app.get("/", (c) => {
     try {
-      // Look for dashboard.html relative to server/
-      const serverDir = config.serverDir || dirname(fileURLToPath(import.meta.url));
-      const dashboardPath = join(serverDir, "..", "dashboard.html");
+      const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
+      const dashboardPath = join(serverDir, "dashboard.html");
       const html = readFileSync(dashboardPath, "utf-8");
       return c.html(html);
     } catch {
       return c.text("Dashboard not found", 404);
+    }
+  });
+
+  // --- Logs viewer route ---
+  app.get("/logs-viewer", (c) => {
+    try {
+      const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
+      const logsPath = join(serverDir, "logs.html");
+      const html = readFileSync(logsPath, "utf-8");
+      return c.html(html);
+    } catch {
+      return c.text("Logs viewer not found", 404);
     }
   });
 

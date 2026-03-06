@@ -7,9 +7,10 @@ import { join } from "path";
  * @param {object} config
  * @param {string} config.repoDir - Main repository directory
  * @param {string} [config.worktreeBase] - Base directory for worktrees (default: repoDir/../worktrees)
+ * @param {object} [config.stmts] - Prepared statements (needs closeThread stmt)
  */
 export function createWorktreeManager(config) {
-  const { repoDir } = config;
+  const { repoDir, stmts: dbStmts } = config;
   const WORKTREES_DIR = config.worktreeBase || join(repoDir, "..", "worktrees");
   mkdirSync(WORKTREES_DIR, { recursive: true });
 
@@ -90,12 +91,20 @@ export function createWorktreeManager(config) {
     }
   }
 
+  function closeThread(rootId) {
+    const now = new Date().toISOString();
+    dbStmts.closeThread.run(now, rootId, rootId);
+    removeWorktree(rootId);
+    console.log(`[thread] Closed thread ${rootId}`);
+  }
+
   return {
     createWorktree,
     removeWorktree,
     getWorktreeChanges,
     commitAndMergeToMain,
     createPullRequest,
+    closeThread,
     getGhToken,
     WORKTREES_DIR,
   };

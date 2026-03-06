@@ -11,7 +11,7 @@ import { join, extname } from "path";
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
   const { runClaude, runClaudeSync, runningPids, liveOutputs } = runner;
-  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, WORKTREES_DIR } = worktrees;
+  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
 
@@ -115,20 +115,22 @@ export function registerRoutes(app, ctx) {
     const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
     const page = Math.max(parseInt(c.req.query("page") || "1", 10), 1);
     const q = (c.req.query("q") || "").trim();
+    const showClosed = c.req.query("closed") === "1";
     const offset = (page - 1) * limit;
 
+    const closedFilter = showClosed ? " AND t.closed_at IS NOT NULL" : " AND t.closed_at IS NULL";
     let countSql, listSql, params, countParams;
 
     if (q) {
       const like = `%${q}%`;
       countSql = `SELECT COUNT(DISTINCT CASE WHEN parent_id IS NULL THEN id ELSE root_id END) as count FROM tasks WHERE prompt LIKE ? OR result LIKE ?`;
       countParams = [like, like];
-      listSql = `SELECT t.*, (SELECT MAX(started_at) FROM tasks WHERE root_id = t.id) as last_activity FROM tasks t WHERE t.parent_id IS NULL AND t.id IN (SELECT DISTINCT CASE WHEN parent_id IS NULL THEN id ELSE root_id END FROM tasks WHERE prompt LIKE ? OR result LIKE ?) ORDER BY last_activity DESC LIMIT ? OFFSET ?`;
+      listSql = `SELECT t.*, (SELECT MAX(started_at) FROM tasks WHERE root_id = t.id) as last_activity FROM tasks t WHERE t.parent_id IS NULL AND t.id IN (SELECT DISTINCT CASE WHEN parent_id IS NULL THEN id ELSE root_id END FROM tasks WHERE prompt LIKE ? OR result LIKE ?)${closedFilter} ORDER BY last_activity DESC LIMIT ? OFFSET ?`;
       params = [like, like, limit, offset];
     } else {
-      countSql = `SELECT COUNT(*) as count FROM tasks WHERE parent_id IS NULL`;
+      countSql = `SELECT COUNT(*) as count FROM tasks WHERE parent_id IS NULL${closedFilter.replace('t.', '')}`;
       countParams = [];
-      listSql = `SELECT t.*, (SELECT MAX(started_at) FROM tasks WHERE root_id = t.id) as last_activity FROM tasks t WHERE t.parent_id IS NULL ORDER BY last_activity DESC LIMIT ? OFFSET ?`;
+      listSql = `SELECT t.*, (SELECT MAX(started_at) FROM tasks WHERE root_id = t.id) as last_activity FROM tasks t WHERE t.parent_id IS NULL${closedFilter} ORDER BY last_activity DESC LIMIT ? OFFSET ?`;
       params = [limit, offset];
     }
 
@@ -193,6 +195,7 @@ export function registerRoutes(app, ctx) {
     }
 
     const id = randomUUID().slice(0, 8);
+    // Look up session and cwd from the whole thread, not just the last task
     const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
@@ -271,13 +274,15 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const sessionId = original.session_id || null;
+    // Resume session if available (check whole thread), otherwise re-run the prompt
+    const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const id = randomUUID().slice(0, 8);
     const prompt = original.prompt;
 
     const user = getCfUser(c);
-    stmts.insert.run(id, `[retry] ${prompt}`, new Date().toISOString(), null, original.cwd, sessionId, original.id, rootId, original.slack_thread_key || null, user);
-    runClaude(id, prompt, MAX_TURNS, sessionId, original.cwd);
+    stmts.insert.run(id, `[retry] ${prompt}`, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, original.slack_thread_key || null, user);
+    runClaude(id, prompt, MAX_TURNS, sessionId, cwd);
 
     return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId }, 202);
   });
@@ -295,9 +300,10 @@ export function registerRoutes(app, ctx) {
     if (!changes) return c.json({ error: "no changes to merge" }, 400);
 
     const message = `task(${task.root_id || task.id}): ${task.prompt.slice(0, 60)}`;
-    const result = commitAndMergeToMain(cwd, task.root_id || task.id, message);
+    const rootId = task.root_id || task.id;
+    const result = commitAndMergeToMain(cwd, rootId, message);
     if (result.ok) {
-      removeWorktree(task.root_id || task.id);
+      closeThread(rootId);
       return c.json({ status: "merged", commit: result.commit });
     }
     return c.json({ error: `merge failed: ${result.error}` }, 500);
@@ -315,10 +321,12 @@ export function registerRoutes(app, ctx) {
     const changes = getWorktreeChanges(cwd);
     if (!changes) return c.json({ error: "no changes" }, 400);
 
-    const title = `task(${task.root_id || task.id}): ${task.prompt.slice(0, 60)}`;
+    const rootId = task.root_id || task.id;
+    const title = `task(${rootId}): ${task.prompt.slice(0, 60)}`;
     const body = `## Task\n- ID: ${task.id}\n- Prompt: ${task.prompt.slice(0, 200)}\n\n## Changes\n${changes.files.map(f => '- ' + f).join('\n')}`;
-    const result = createPullRequest(cwd, task.root_id || task.id, title, body);
+    const result = createPullRequest(cwd, rootId, title, body);
     if (result.ok) {
+      closeThread(rootId);
       return c.json({ status: "pr_created", prUrl: result.prUrl, branch: result.branch });
     }
     return c.json({ error: `PR creation failed: ${result.error}` }, 500);
@@ -329,8 +337,18 @@ export function registerRoutes(app, ctx) {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
     const rootId = task.root_id || task.id;
-    removeWorktree(rootId);
+    closeThread(rootId);
     return c.json({ status: "discarded" });
+  });
+
+  // --- Close thread (manual done, no changes) ---
+  app.post("/task/:id/close", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread has running tasks" }, 409);
+    closeThread(rootId);
+    return c.json({ status: "closed" });
   });
 
   // --- Users ---
@@ -362,8 +380,8 @@ export function registerRoutes(app, ctx) {
       tasks: {
         total, running: runningPids.size,
         completed: statusCounts.completed || 0, failed: statusCounts.failed || 0,
-        done: db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL AND parent_id IS NULL`).get().c,
-        waiting: db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE t.parent_id IS NULL AND t.closed_at IS NULL AND t.status != 'running' AND NOT EXISTS (SELECT 1 FROM tasks r WHERE r.root_id = t.id AND r.status = 'running')`).get().c,
+        done: stmts.countDone.get().c,
+        waiting: stmts.countWaiting.get().c,
       },
       worktrees: worktreeCount,
       uptime: process.uptime(),
@@ -390,44 +408,45 @@ export function registerRoutes(app, ctx) {
   });
 
   // --- Logs ---
-  const LOG_SOURCES = {
-    "webhook-server": "webhook-server",
-    "task-runner": "task-runner",
-    "deploy": "deploy",
-  };
-
   app.get("/logs", (c) => {
     const source = c.req.query("source") || "webhook-server";
     const lines = parseInt(c.req.query("lines") || "200", 10);
+    const after = c.req.query("after") || null;
 
-    if (!LOG_SOURCES[source]) {
-      return c.json({ error: `unknown source: ${source}` }, 400);
-    }
-
-    let content = "";
     try {
+      let content = "";
       if (source === "deploy") {
-        const logPath = join(process.env.HOME || "", "logs", "deploy.log");
+        const logPath = join(process.env.HOME || "/tmp", "logs", "deploy.log");
         if (existsSync(logPath)) {
-          content = readFileSync(logPath, "utf-8").split("\n").slice(-lines).join("\n");
+          content = readFileSync(logPath, "utf-8");
         } else {
           content = "(deploy.log not found)";
         }
       } else if (source === "webhook-server" || source === "task-runner") {
         try {
           content = execSync(
-            `tmux capture-pane -t ${source} -p -S -${lines} 2>/dev/null || echo "(session not found)"`,
+            `tmux capture-pane -t ${source} -p -S -${lines} 2>/dev/null`,
             { encoding: "utf-8", timeout: 5000 }
           );
         } catch {
           content = `(tmux session '${source}' not available)`;
         }
+      } else {
+        return c.json({ error: "unknown source" }, 400);
       }
-    } catch (err) {
-      content = `Error: ${err.message}`;
-    }
 
-    return c.json({ source, content, lines });
+      const allLines = content.split("\n");
+      const trimmed = allLines.slice(-lines);
+
+      return c.json({
+        source,
+        lines: trimmed,
+        total: allLines.length,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      return c.json({ error: err.message }, 500);
+    }
   });
 
   app.get("/logs/sources", (c) => {

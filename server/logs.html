@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mac Mini Logs</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  .header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid #1a1a1a;
+    background: #0d0d0d; flex-shrink: 0;
+  }
+  .header h1 { font-size: 1rem; color: #fff; }
+  .header a { color: #60a5fa; text-decoration: none; font-size: 0.8rem; }
+  .header a:hover { text-decoration: underline; }
+
+  .tabs {
+    display: flex; gap: 2px; padding: 8px 16px 0;
+    border-bottom: 1px solid #1a1a1a; background: #0d0d0d; flex-shrink: 0;
+  }
+  .tab {
+    padding: 6px 16px; border-radius: 6px 6px 0 0; cursor: pointer;
+    font-size: 0.8rem; font-weight: 600; color: #666;
+    background: transparent; border: 1px solid transparent;
+    border-bottom: none; transition: all 0.15s;
+  }
+  .tab:hover { color: #aaa; }
+  .tab.active {
+    color: #fff; background: #161616;
+    border-color: #1a1a1a; position: relative;
+  }
+  .tab.active::after {
+    content: ''; position: absolute; bottom: -1px; left: 0; right: 0;
+    height: 1px; background: #161616;
+  }
+  .tab .dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .dot-live { background: #4ade80; animation: blink 2s infinite; }
+  .dot-file { background: #fbbf24; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .controls {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; border-bottom: 1px solid #1a1a1a;
+    background: #0e0e0e; flex-shrink: 0;
+  }
+  .controls label { font-size: 0.75rem; color: #888; }
+  .controls input[type="number"] {
+    width: 60px; background: #161616; border: 1px solid #2a2a2a;
+    border-radius: 4px; padding: 3px 6px; color: #fff; font-size: 0.75rem;
+  }
+  .controls button {
+    background: #1a2a3a; color: #60a5fa; border: 1px solid #2a3a4a;
+    border-radius: 4px; padding: 3px 10px; font-size: 0.75rem;
+    cursor: pointer; font-weight: 600;
+  }
+  .controls button:hover { background: #2a3a4a; }
+  .controls button.active { background: #1a3a1a; color: #4ade80; border-color: #2a4a2a; }
+  .controls .spacer { flex: 1; }
+  .controls .status-text { font-size: 0.7rem; color: #555; }
+
+  .log-search {
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 4px;
+    padding: 3px 8px; color: #fff; font-size: 0.75rem; width: 150px; outline: none;
+  }
+  .log-search:focus { border-color: #60a5fa; }
+
+  .log-container {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 0; background: #0a0a0a; font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  }
+  .log-line {
+    padding: 1px 16px; font-size: 0.75rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all; border-bottom: 1px solid #0f0f0f;
+  }
+  .log-line:hover { background: #141414; }
+  .log-line.highlight { background: #2a2a1a; }
+
+  /* Color coding */
+  .log-error { color: #f87171; }
+  .log-warn { color: #fbbf24; }
+  .log-info { color: #e0e0e0; }
+  .log-debug { color: #666; }
+  .log-deploy { color: #a78bfa; }
+  .log-timestamp { color: #555; }
+  .log-dim { color: #444; }
+
+  .log-empty { color: #444; text-align: center; padding: 40px; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Mac Mini Logs</h1>
+  <a href="/">← Dashboard</a>
+</div>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="controls">
+  <label>行数</label>
+  <input type="number" id="lineCount" value="200" min="50" max="2000" step="50">
+  <button id="autoScrollBtn" class="active" onclick="toggleAutoScroll()">Auto-scroll</button>
+  <input type="text" class="log-search" id="logSearch" placeholder="フィルタ..." autocomplete="off">
+  <div class="spacer"></div>
+  <span class="status-text" id="statusText"></span>
+  <button onclick="fetchLogs()">更新</button>
+  <button id="liveBtn" class="active" onclick="toggleLive()">Live</button>
+</div>
+
+<div class="log-container" id="logContainer">
+  <div class="log-empty">ログを読み込み中...</div>
+</div>
+
+<script>
+const API = location.origin;
+let currentSource = 'server';
+let autoScroll = true;
+let liveMode = true;
+let liveInterval = null;
+let filterText = '';
+let logLines = [];
+
+const sources = [
+  { id: 'webhook-server', name: 'Server', type: 'tmux' },
+  { id: 'task-runner', name: 'Task Runner', type: 'tmux' },
+  { id: 'deploy', name: 'Deploy', type: 'file' },
+];
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function classifyLine(line) {
+  const lower = line.toLowerCase();
+  if (lower.includes('error') || lower.includes('fatal') || lower.includes('exception')) return 'log-error';
+  if (lower.includes('warn') || lower.includes('warning')) return 'log-warn';
+  if (lower.includes('debug') || lower.includes('verbose')) return 'log-debug';
+  if (lower.includes('deploy')) return 'log-deploy';
+  if (line.trim() === '') return 'log-dim';
+  return 'log-info';
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = sources.map(s => {
+    const active = s.id === currentSource ? ' active' : '';
+    const dotClass = s.type === 'tmux' ? 'dot-live' : 'dot-file';
+    return `<div class="tab${active}" onclick="switchSource('${s.id}')">${s.name}<span class="dot ${dotClass}"></span></div>`;
+  }).join('');
+}
+
+function renderLogs() {
+  const container = document.getElementById('logContainer');
+  const filtered = filterText
+    ? logLines.filter(l => l.toLowerCase().includes(filterText.toLowerCase()))
+    : logLines;
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="log-empty">ログなし</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(line => {
+    const cls = classifyLine(line);
+    const highlighted = filterText ? highlightMatch(esc(line), filterText) : esc(line);
+    return `<div class="log-line ${cls}">${highlighted}</div>`;
+  }).join('');
+
+  if (autoScroll) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function highlightMatch(html, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return html.replace(new RegExp(`(${escaped})`, 'gi'), '<span style="background:#4a3a1a;color:#fbbf24">$1</span>');
+}
+
+async function fetchLogs() {
+  const lines = document.getElementById('lineCount').value || 200;
+  try {
+    const res = await fetch(`${API}/logs?source=${currentSource}&lines=${lines}`);
+    const data = await res.json();
+    if (data.error) {
+      logLines = [`Error: ${data.error}`];
+    } else {
+      logLines = data.lines || [];
+    }
+    document.getElementById('statusText').textContent =
+      `${logLines.length} lines | ${new Date().toLocaleTimeString()}`;
+    renderLogs();
+  } catch (e) {
+    logLines = [`Fetch error: ${e.message}`];
+    renderLogs();
+  }
+}
+
+function switchSource(id) {
+  currentSource = id;
+  renderTabs();
+  fetchLogs();
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  const btn = document.getElementById('autoScrollBtn');
+  btn.classList.toggle('active', autoScroll);
+  if (autoScroll) {
+    const container = document.getElementById('logContainer');
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function toggleLive() {
+  liveMode = !liveMode;
+  const btn = document.getElementById('liveBtn');
+  btn.classList.toggle('active', liveMode);
+  if (liveMode) {
+    startLive();
+  } else {
+    stopLive();
+  }
+}
+
+function startLive() {
+  stopLive();
+  liveInterval = setInterval(fetchLogs, 2000);
+}
+
+function stopLive() {
+  if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+}
+
+// Detect manual scroll to disable auto-scroll
+document.getElementById('logContainer').addEventListener('scroll', (e) => {
+  const el = e.target;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+  if (!atBottom && autoScroll) {
+    autoScroll = false;
+    document.getElementById('autoScrollBtn').classList.remove('active');
+  }
+});
+
+// Filter
+document.getElementById('logSearch').addEventListener('input', (e) => {
+  filterText = e.target.value.trim();
+  renderLogs();
+});
+
+// Init
+renderTabs();
+fetchLogs();
+startLive();
+</script>
+</body>
+</html>

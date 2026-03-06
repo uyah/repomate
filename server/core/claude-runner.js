@@ -73,7 +73,7 @@ export function createClaudeRunner(config) {
             if (evt.session_id) capturedSessionId = evt.session_id;
             if (evt.subtype) resultSubtype = evt.subtype;
             if (evt.result) lastResultText = evt.result;
-            if (evt.is_error) lastErrorText = evt.result || "Unknown error";
+            if (evt.is_error) lastErrorText = evt.result || (evt.errors && evt.errors.join("; ")) || "Unknown error";
           }
         } catch {}
       }
@@ -85,6 +85,14 @@ export function createClaudeRunner(config) {
       runningPids.delete(taskId);
       liveOutputs.delete(taskId);
       const completedAt = new Date().toISOString();
+
+      // Auto-retry without --resume if session not found
+      if (sessionId && lastErrorText && lastErrorText.includes("No conversation found")) {
+        console.log(`[${taskId}] Session not found, retrying without --resume`);
+        stmts.update.run("failed", completedAt, null, lastErrorText, null, null, taskId);
+        runClaude(taskId, prompt, turns, null, cwd);
+        return;
+      }
 
       const eventsJson = liveData.events.length > 0 ? JSON.stringify(liveData.events) : null;
 
