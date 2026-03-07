@@ -79,6 +79,8 @@
   .thread-item-prompt { font-size: 0.82rem; color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; }
   .thread-item-footer { display: flex; gap: 6px; align-items: center; }
   .thread-item-replies { font-size: 0.65rem; color: #555; }
+  .dev-server-badge { font-size: 0.6rem; color: #2ecc71; text-decoration: none; font-weight: 600; margin-left: auto; }
+  .dev-server-badge:hover { text-decoration: underline; }
 
   .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
   .badge-running { background: #1e3a5f; color: #60a5fa; animation: pulse 1.5s infinite; }
@@ -272,6 +274,7 @@
         <div class="detail-title" id="detailTitle"></div>
         <div class="detail-actions" id="detailActions"></div>
       </div>
+      <div id="detailDevBar"></div>
       <div class="detail-body" id="detailBody"></div>
       <div class="detail-reply" id="detailReply" style="display:none">
         <div class="file-preview" id="detailFilePreview"></div>
@@ -472,6 +475,13 @@ function renderThreadItem(t) {
     <div class="thread-item-footer">
       <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
+      ${(() => {
+        const ds = devServersMap[t.id];
+        if (!ds || t.closedAt) return '';
+        const bd = publicConfig?.devServer?.baseDomain;
+        const url = bd ? `https://task-${t.id}.${bd}` : `http://localhost:${ds.port}`;
+        return `<a class="dev-server-badge" href="${url}" target="_blank" onclick="event.stopPropagation()">&#9679; Dev :${ds.port}</a>`;
+      })()}
     </div>
   </div>`;
 }
@@ -546,6 +556,7 @@ function renderDetailMsg(t, isReply, isLast) {
 
 function renderDetail(t) {
   if (!t) return;
+  const prevSelectedThreadId = selectedThreadId;
   selectedThreadId = t.id;
   const pane = document.getElementById('detailPane');
   const content = document.getElementById('detailContent');
@@ -615,28 +626,33 @@ function renderDetail(t) {
     }
   }
 
+  // Dev server bar (fixed in header area)
+  document.getElementById('detailDevBar').innerHTML = devBarHtml;
+
   // Messages
   const allTasks = [t, ...(t.replies || [])];
-  let html = devBarHtml;
+  let html = '';
   for (let i = 0; i < allTasks.length; i++) {
     const isLast = i === allTasks.length - 1;
     html += renderDetailMsg(allTasks[i], i > 0, isLast);
   }
   document.getElementById('detailBody').innerHTML = html;
 
-  // Reply input - show for any completed/non-running thread
+  // Reply input - always show unless closed
   const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
   const replyEl = document.getElementById('detailReply');
-  if (!hasRunning && !t.closedAt && ['completed', 'failed', 'interrupted', 'cancelled', 'max_turns'].includes(last.status)) {
+  if (!t.closedAt) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
   } else {
     replyEl.style.display = 'none';
   }
 
-  // Scroll to bottom
-  const body = document.getElementById('detailBody');
-  body.scrollTop = body.scrollHeight;
+  // Scroll to bottom only on first open or thread change
+  if (selectedThreadId !== prevSelectedThreadId) {
+    const body = document.getElementById('detailBody');
+    body.scrollTop = body.scrollHeight;
+  }
 
   // Re-render list to update active state
   renderList();
