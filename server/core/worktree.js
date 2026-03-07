@@ -1,5 +1,5 @@
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, copyFileSync } from "fs";
 import { join } from "path";
 
 /**
@@ -33,6 +33,13 @@ export function createWorktreeManager(config) {
     if (existsSync(worktreePath)) return worktreePath;
     try {
       execSync(`git worktree add --detach "${worktreePath}"`, { cwd: repoDir, stdio: "pipe" });
+      // Copy .env files from main repo
+      try {
+        const envFiles = readdirSync(repoDir).filter(f => f.startsWith(".env"));
+        for (const f of envFiles) {
+          copyFileSync(join(repoDir, f), join(worktreePath, f));
+        }
+      } catch {}
       console.log(`[worktree] Created ${worktreePath}`);
       return worktreePath;
     } catch (err) {
