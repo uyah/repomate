@@ -33,14 +33,6 @@ export function createWorktreeManager(config) {
     if (existsSync(worktreePath)) return worktreePath;
     try {
       execSync(`git worktree add --detach "${worktreePath}"`, { cwd: repoDir, stdio: "pipe" });
-      // Symlink node_modules from main repo so dev server and tools work
-      const srcModules = join(repoDir, "node_modules");
-      const dstModules = join(worktreePath, "node_modules");
-      if (existsSync(srcModules) && !existsSync(dstModules)) {
-        try {
-          execSync(`ln -s "${srcModules}" "${dstModules}"`, { stdio: "pipe" });
-        } catch {}
-      }
       console.log(`[worktree] Created ${worktreePath}`);
       return worktreePath;
     } catch (err) {
@@ -121,6 +113,17 @@ export function createWorktreeManager(config) {
   function startDevServer(taskId, cwd) {
     if (!devServerConfig) return null;
     if (devServerProcs.has(taskId)) return dbStmts.devServerGet.get(taskId);
+
+    // Install dependencies if installCommand is configured
+    const installCmd = devServerConfig.installCommand || "npm install";
+    try {
+      console.log(`[dev:${taskId}] Running: ${installCmd}`);
+      execSync(installCmd, { cwd, stdio: "pipe", timeout: 300000 });
+      console.log(`[dev:${taskId}] Install complete`);
+    } catch (err) {
+      console.error(`[dev:${taskId}] Install failed: ${err.message}`);
+      return { error: `install failed: ${err.message}` };
+    }
 
     const port = allocatePort();
     const subdomain = `task-${taskId}`;

@@ -470,6 +470,7 @@ export function registerRoutes(app, ctx) {
     if (!cwd) return c.json({ error: "no worktree for this task" }, 400);
     const result = startDevServer(rootId, cwd);
     if (!result) return c.json({ error: "dev server not configured" }, 400);
+    if (result.error) return c.json({ error: result.error }, 500);
     return c.json(result);
   });
 
