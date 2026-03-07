@@ -967,7 +967,10 @@ async function cancelTask(taskId) {
 
 async function mergeTask(taskId) {
   if (!confirm('mainにマージしますか？')) return;
+  const btn = document.querySelector('.wt-merge');
+  const origText = btn ? btn.textContent : '';
   try {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> マージ中...'; }
     const res = await fetch(API + '/task/' + taskId + '/merge', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'マージ失敗'); return; }
@@ -975,10 +978,14 @@ async function mergeTask(taskId) {
     closeDetail();
     refresh();
   } catch (e) { alert('マージ失敗: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
 async function createPr(taskId) {
+  const btn = document.querySelector('.wt-pr');
+  const origText = btn ? btn.textContent : '';
   try {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> PR作成中...'; }
     const res = await fetch(API + '/task/' + taskId + '/pr', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }
@@ -986,6 +993,7 @@ async function createPr(taskId) {
     closeDetail();
     refresh();
   } catch (e) { alert('PR作成失敗: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
 function switchTab(tab) {

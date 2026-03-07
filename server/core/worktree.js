@@ -91,10 +91,11 @@ export function createWorktreeManager(config) {
       execSync(`git checkout -b "${branch}"`, { cwd, stdio: "pipe" });
       execSync("git add -A", { cwd, stdio: "pipe" });
       execSync(`git commit -m "${title.replace(/"/g, '\\"')}"`, { cwd, stdio: "pipe" });
-      execSync(`git push origin "${branch}"`, { cwd, stdio: "pipe", env: { ...process.env, ...getGhToken() } });
+      const ghEnv = { ...process.env, ...getGhToken() };
+      execSync(`git push origin "${branch}"`, { cwd, stdio: "pipe", env: ghEnv });
       const prUrl = execSync(
-        `gh pr create --title "${title.replace(/"/g, '\\"')}" --body "${(body || "").replace(/"/g, '\\"')}" --head "${branch}" --base main`,
-        { cwd, encoding: "utf-8", env: { ...process.env, ...getGhToken() } }
+        `gh pr create --title "${title.replace(/"/g, '\\"')}" --body-file - --head "${branch}" --base main`,
+        { cwd, encoding: "utf-8", env: ghEnv, input: body || "" }
       ).trim();
       return { ok: true, prUrl, branch };
     } catch (err) {

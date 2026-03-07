@@ -329,8 +329,20 @@ export function registerRoutes(app, ctx) {
     if (!changes) return c.json({ error: "no changes" }, 400);
 
     const rootId = task.root_id || task.id;
-    const title = `task(${rootId}): ${task.prompt.slice(0, 60)}`;
-    const body = `## Task\n- ID: ${task.id}\n- Prompt: ${task.prompt.slice(0, 200)}\n\n## Changes\n${changes.files.map(f => '- ' + f).join('\n')}`;
+    const rootTask = task.root_id ? stmts.get.get(task.root_id) : task;
+
+    // Collect all prompts in the thread for context
+    const threadTasks = stmts.thread.all(rootId);
+    const prompts = threadTasks.map(t => t.prompt).filter(Boolean);
+    const firstPrompt = (rootTask?.prompt || task.prompt || "").slice(0, 60);
+    const title = `task(${rootId}): ${firstPrompt}`;
+
+    // Build detailed body
+    let body = `## Summary\n`;
+    body += prompts.map((p, i) => `${i + 1}. ${p.slice(0, 300)}`).join('\n');
+    body += `\n\n## Changes\n`;
+    body += changes.files.map(f => '- `' + f + '`').join('\n');
+
     const result = createPullRequest(cwd, rootId, title, body);
     if (result.ok) {
       closeThread(rootId);
