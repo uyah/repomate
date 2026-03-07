@@ -58,33 +58,17 @@ export async function createApp(config) {
     maxTurns,
   });
 
-  // --- Reverse proxy for dev servers (path-based: /dev/:subdomain/*) ---
-  if (config.devServer) {
-    app.all("/dev/:subdomain/*", async (c) => {
-      const subdomain = c.req.param("subdomain");
-      const server = worktrees.getDevServerBySubdomain(subdomain);
-      if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
-      const proxyPath = c.req.path.replace(`/dev/${subdomain}`, "") || "/";
-      const url = new URL(c.req.url);
-      const target = `http://localhost:${server.port}${proxyPath}${url.search}`;
-      const resp = await fetch(target, {
-        method: c.req.method,
-        headers: c.req.raw.headers,
-        body: c.req.method !== "GET" && c.req.method !== "HEAD" ? c.req.raw.body : undefined,
-        redirect: "manual",
-      });
-      return new Response(resp.body, {
-        status: resp.status,
-        headers: resp.headers,
-      });
-    });
-    // Also handle exact /dev/:subdomain (no trailing path)
-    app.all("/dev/:subdomain", async (c) => {
-      const subdomain = c.req.param("subdomain");
+  // --- Reverse proxy for dev server subdomains ---
+  const baseDomain = config.devServer?.baseDomain;
+  if (baseDomain) {
+    app.use("*", async (c, next) => {
+      const host = c.req.header("host") || "";
+      if (!host.endsWith(`.${baseDomain}`)) return next();
+      const subdomain = host.replace(`.${baseDomain}`, "");
       const server = worktrees.getDevServerBySubdomain(subdomain);
       if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
       const url = new URL(c.req.url);
-      const target = `http://localhost:${server.port}/${url.search}`;
+      const target = `http://localhost:${server.port}${url.pathname}${url.search}`;
       const resp = await fetch(target, {
         method: c.req.method,
         headers: c.req.raw.headers,
