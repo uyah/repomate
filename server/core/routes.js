@@ -347,34 +347,35 @@ export function registerRoutes(app, ctx) {
 
     const rootId = task.root_id || task.id;
 
-    // Collect all prompts in the thread for context
-    const threadTasks = stmts.thread.all(rootId);
-    const prompts = threadTasks.map(t => t.prompt).filter(Boolean);
+    // Resume existing session so Claude has full thread context
+    const sessionRow = stmts.latestSessionInThread.get(rootId);
+    const sessionId = sessionRow?.session_id || null;
 
-    // Create a new task for PR creation via Claude Code
     const prTaskId = `pr-${rootId}-${Date.now()}`;
-    const branch = `task/${rootId}`;
-    const prompt = `以下のタスクの変更をPRにしてください。
+    const port = config.port || 8080;
+    const callbackUrl = `http://localhost:${port}/internal/pr-callback/${rootId}`;
+    const prompt = `この作業の変更をPRにしてください。git diff で差分を確認し、適切なコミットメッセージでコミットし、gh pr create でPRを作成してください。`;
 
-## 元のリクエスト
-${prompts.map((p, i) => `${i + 1}. ${p.slice(0, 500)}`).join('\n')}
+    stmts.insert.run(prTaskId, prompt, new Date().toISOString(), callbackUrl, cwd, sessionId, rootId, rootId, null, null);
+    runClaude(prTaskId, prompt, 30, sessionId, cwd);
 
-## 手順
-1. \`git diff\` で変更内容を確認
-2. 変更を全てコミット（適切なコミットメッセージで。複数コミットに分けてもOK）
-3. ブランチ名 \`${branch}\` で push
-4. \`gh pr create\` でPRを作成
-   - タイトル: 変更内容を端的に表す日本語タイトル（Conventional Commits形式）
-   - body: 変更の要約、動機、主な変更点を記述
+    return c.json({ status: "pr_creating", taskId: prTaskId });
+  });
 
-PRのURLを最後に出力してください。`;
+  // --- Internal: PR creation callback ---
+  app.post("/internal/pr-callback/:rootId", async (c) => {
+    const rootId = c.req.param("rootId");
+    const body = await c.req.json();
+    if (body.status !== "completed" || !body.result) return c.json({ ok: true });
 
-    stmts.insert.run(prTaskId, prompt, new Date().toISOString(), null, cwd, null, rootId, rootId, null, null);
-
-    // Run Claude in background — don't block the HTTP response
-    runClaude(prTaskId, prompt, 30, null, cwd);
-
-    return c.json({ status: "pr_creating", taskId: prTaskId, message: "Claude is creating the PR" });
+    const prUrlMatch = body.result.match(/https:\/\/github\.com\/[^\s)>\]]+\/pull\/\d+/);
+    if (prUrlMatch) {
+      const branchMatch = body.result.match(/task\/[a-z0-9-]+|[a-z]+\/[a-z0-9_-]+/i);
+      stmts.setThreadPr.run(prUrlMatch[0], branchMatch?.[0] || null, rootId);
+      stopDevServer(rootId);
+      console.log(`[pr] Linked PR ${prUrlMatch[0]} to thread ${rootId}`);
+    }
+    return c.json({ ok: true });
   });
 
   // --- Discard changes ---
