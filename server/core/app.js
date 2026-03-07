@@ -160,6 +160,9 @@ export async function createApp(config) {
   return {
     app,
     runner,
-    cleanup: (signal) => runner.gracefulShutdown(signal),
+    cleanup: (signal) => {
+      worktrees.stopAllDevServers();
+      runner.gracefulShutdown(signal);
+    },
   };
 }

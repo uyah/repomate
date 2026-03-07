@@ -226,6 +226,17 @@ export function createWorktreeManager(config) {
     return devServerLogs.get(taskId) || [];
   }
 
+  function stopAllDevServers() {
+    for (const [taskId, proc] of devServerProcs) {
+      try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+      dbStmts.devServerDelete.run(taskId);
+    }
+    const count = devServerProcs.size;
+    devServerProcs.clear();
+    devServerLogs.clear();
+    if (count > 0) console.log(`[dev] Stopped ${count} dev server(s)`);
+  }
+
   return {
     createWorktree,
     removeWorktree,
@@ -239,6 +250,7 @@ export function createWorktreeManager(config) {
     getDevServers,
     getDevServerBySubdomain,
     getDevServerLogs,
+    stopAllDevServers,
     WORKTREES_DIR,
   };
 }
