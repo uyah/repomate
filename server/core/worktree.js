@@ -111,6 +111,31 @@ export function createWorktreeManager(config) {
 
   // --- Dev server management ---
 
+  // Clean up stale dev server records on startup (processes don't survive server restart)
+  if (devServerConfig) {
+    const stale = dbStmts.devServerAll.all();
+    for (const ds of stale) {
+      // Try to kill old process if still alive
+      if (ds.pid) {
+        try { process.kill(-ds.pid, "SIGTERM"); } catch {}
+      }
+      dbStmts.devServerDelete.run(ds.task_id);
+    }
+    if (stale.length > 0) console.log(`[dev] Cleaned up ${stale.length} stale dev server record(s)`);
+  }
+
+  function killPortUser(port) {
+    try {
+      const output = execSync(`lsof -ti :${port}`, { encoding: "utf-8", timeout: 5000 }).trim();
+      if (output) {
+        for (const pid of output.split("\n")) {
+          try { process.kill(Number(pid), "SIGKILL"); } catch {}
+        }
+        console.log(`[dev] Killed process(es) on port ${port}`);
+      }
+    } catch {}
+  }
+
   function allocatePort() {
     const startPort = devServerConfig?.startPort || 3001;
     const row = dbStmts.devServerMaxPort.get();
@@ -133,6 +158,7 @@ export function createWorktreeManager(config) {
     }
 
     const port = allocatePort();
+    killPortUser(port);
     const subdomain = `task-${taskId}`;
     const cmd = (devServerConfig.command || "npm run dev -- -p $PORT")
       .replace(/\$PORT/g, String(port));
