@@ -53,7 +53,7 @@ export function createClaudeRunner(config) {
 
     try {
       execSync(
-        `tmux new-session -d -s '${name}' -x 100 -y 50 "cd '${escapedCwd}' && claude --dangerously-skip-permissions"`,
+        `tmux new-session -d -s '${name}' -x 80 -y 50 "cd '${escapedCwd}' && claude --dangerously-skip-permissions"`,
         { env, stdio: "pipe" },
       );
       execSync(`tmux set-option -t '${name}' history-limit 50000`, { stdio: "pipe" });
