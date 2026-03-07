@@ -647,7 +647,7 @@ function renderDetail(t) {
   // Terminal output
   const body = document.getElementById('detailBody');
   if (!body.querySelector('#terminalOutput')) {
-    body.innerHTML = '<pre id="terminalOutput" style="margin:0;padding:12px 16px;font-size:0.82rem;line-height:1.5;color:#ccc;white-space:pre-wrap;word-break:break-word;min-height:100%"></pre>';
+    body.innerHTML = '<pre id="terminalOutput" style="margin:0;padding:12px 16px;font-size:0.8rem;line-height:1.4;color:#ccc;white-space:pre;overflow-x:auto;min-height:100%;font-family:ui-monospace,Menlo,Monaco,monospace"></pre>';
   }
 
   // Start polling terminal output

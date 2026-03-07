@@ -53,7 +53,7 @@ export function createClaudeRunner(config) {
 
     try {
       execSync(
-        `tmux new-session -d -s '${name}' -x 220 -y 50 "cd '${escapedCwd}' && claude --dangerously-skip-permissions"`,
+        `tmux new-session -d -s '${name}' -x 100 -y 50 "cd '${escapedCwd}' && claude --dangerously-skip-permissions"`,
         { env, stdio: "pipe" },
       );
       execSync(`tmux set-option -t '${name}' history-limit 50000`, { stdio: "pipe" });
@@ -111,9 +111,11 @@ export function createClaudeRunner(config) {
     const name = sn(rootId);
     if (hasSession(rootId)) {
       try {
-        return execSync(`tmux capture-pane -t '${name}' -p -S -${lines}`, {
+        const raw = execSync(`tmux capture-pane -t '${name}' -p -S -${lines}`, {
           encoding: "utf-8", timeout: 5000,
         });
+        // Trim trailing whitespace per line and remove excessive blank lines
+        return raw.split("\n").map(l => l.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n");
       } catch {}
     }
     // Fall back to log file
