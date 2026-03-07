@@ -584,7 +584,7 @@ function renderDetail(t) {
   let devBarHtml = '';
   if (baseDomain && !t.closedAt) {
     if (devServer) {
-      const devUrl = `https://task-${rootId}.${baseDomain}`;
+      const devUrl = `${location.origin}/dev/task-${rootId}`;
       devBarHtml = `<div class="dev-server-bar">
         <span class="dev-server-label">Dev Server:</span>
         <a class="dev-server-url" href="${devUrl}" target="_blank">${devUrl}</a>
