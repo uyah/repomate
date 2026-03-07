@@ -29,11 +29,15 @@ export function createWorktreeManager(config) {
     return {};
   }
 
-  function createWorktree(taskId) {
+  function createWorktree(taskId, opts) {
     const worktreePath = join(WORKTREES_DIR, `task-${taskId}`);
     if (existsSync(worktreePath)) return worktreePath;
     try {
-      execSync(`git worktree add --detach "${worktreePath}"`, { cwd: repoDir, stdio: "pipe" });
+      const branch = opts?.branch;
+      const cmd = branch
+        ? `git worktree add "${worktreePath}" "${branch}"`
+        : `git worktree add --detach "${worktreePath}"`;
+      execSync(cmd, { cwd: repoDir, stdio: "pipe" });
       // Copy .env files from main repo
       try {
         const envFiles = readdirSync(repoDir).filter(f => f.startsWith(".env"));

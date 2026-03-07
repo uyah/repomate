@@ -74,7 +74,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
     let displayPrompt = prompt;
@@ -88,10 +88,19 @@ export function registerRoutes(app, ctx) {
       }
     }
 
+    // If branch specified, fetch it first so worktree can check it out
+    if (branch) {
+      try {
+        execSync(`git fetch origin "${branch}"`, { cwd: config.repoDir, stdio: "pipe" });
+      } catch {}
+    }
+
     const id = randomUUID().slice(0, 8);
-    const worktreeCwd = createWorktree(id);
+    const worktreeCwd = createWorktree(id, branch ? { branch: `origin/${branch}` } : undefined);
     const user = getCfUser(c);
-    stmts.insert.run(id, displayPrompt, new Date().toISOString(), callback || null, worktreeCwd, null, null, id, null, user);
+    const now = new Date().toISOString();
+    stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
+    if (branch) stmts.setThreadPr.run(null, branch, id);
     runClaude(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd);
 
     return c.json({ id, status: "accepted" }, 202);

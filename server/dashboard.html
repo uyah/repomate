@@ -259,10 +259,14 @@
     <div id="loadMore" style="display:none"><span class="load-more-text">読み込み中...</span></div>
     <div class="list-input">
       <div class="file-preview" id="mainFilePreview"></div>
+      <div id="branchInputRow" style="display:none;margin-bottom:4px">
+        <input id="branchInput" type="text" placeholder="ブランチ名 (例: task/abc123, fix/bug)" style="width:100%;padding:6px 8px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.8rem" autocomplete="off">
+      </div>
       <div class="input-row">
         <input id="promptInput" type="text" placeholder="新しいタスク..." autocomplete="off">
         <button id="sendBtn" onclick="sendTask()">送信</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
+        <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
       </div>
       <input type="file" id="mainFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
     </div>
@@ -475,6 +479,7 @@ function renderThreadItem(t) {
       <span class="thread-item-user">${esc(user)}</span>
       <span class="thread-item-time">${timeAgo(time)}</span>
     </div>
+    ${t.branch ? `<div style="font-size:0.6rem;color:#60a5fa;margin-bottom:2px">🌿 ${esc(t.branch)}</div>` : ''}
     <div class="thread-item-prompt">${esc(prompt)}</div>
     <div class="thread-item-footer">
       <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'pr' ? 'PR' : status}</span>
@@ -915,21 +920,33 @@ document.addEventListener('drop', async (e) => {
   renderMainPreview();
 });
 
+// === Branch input toggle ===
+function toggleBranchInput() {
+  const row = document.getElementById('branchInputRow');
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+  if (row.style.display !== 'none') document.getElementById('branchInput').focus();
+}
+
 // === Send new task ===
 let sending = false;
 async function sendTask() {
   if (sending) return;
   const input = document.getElementById('promptInput');
   const btn = document.getElementById('sendBtn');
+  const branchInput = document.getElementById('branchInput');
   const prompt = input.value.trim();
   if (!prompt && pendingFiles.length === 0) return;
   sending = true; btn.disabled = true;
   try {
     const files = pendingFiles.map(f => f.name);
+    const branch = branchInput.value.trim();
     const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30 };
     if (files.length > 0) body.files = files;
+    if (branch) body.branch = branch;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = '';
+    branchInput.value = '';
+    document.getElementById('branchInputRow').style.display = 'none';
     pendingFiles.length = 0;
     renderMainPreview();
     setTimeout(refresh, 500);
