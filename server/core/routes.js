@@ -221,7 +221,7 @@ export function registerRoutes(app, ctx) {
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
   });
 
-  // --- SSE stream ---
+  // --- SSE stream (fast: 300ms interval, delta-based) ---
   app.get("/task/:id/stream", (c) => {
     const taskId = c.req.param("id");
     const task = stmts.get.get(taskId);
@@ -234,6 +234,8 @@ export function registerRoutes(app, ctx) {
           const send = (data) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
 
           let closed = false;
+          let lastEventCount = 0;
+          let lastText = "";
           const safeClose = () => { if (!closed) { closed = true; try { controller.close(); } catch {} } };
           const interval = setInterval(() => {
             if (closed) { clearInterval(interval); return; }
@@ -242,19 +244,31 @@ export function registerRoutes(app, ctx) {
               const live = liveOutputs.get(taskId);
               if (!current) { clearInterval(interval); safeClose(); return; }
 
-              send({
-                status: current.status === "running" ? "running" : current.status,
-                output: live?.lastText || current.result || "",
-                events: live?.events || null,
-                error: current.error,
-              });
+              const allEvents = live?.events || null;
+              const currentText = live?.lastText || current.result || "";
+              const eventCount = allEvents?.length || 0;
+
+              // Send delta: only new events since last send
+              if (eventCount > lastEventCount || currentText !== lastText || current.status !== "running") {
+                const newEvents = allEvents ? allEvents.slice(lastEventCount) : null;
+                send({
+                  status: current.status === "running" ? "running" : current.status,
+                  output: currentText,
+                  events: allEvents,
+                  newEvents: newEvents,
+                  eventOffset: lastEventCount,
+                  error: current.error,
+                });
+                lastEventCount = eventCount;
+                lastText = currentText;
+              }
 
               if (current.status !== "running") {
                 clearInterval(interval);
                 safeClose();
               }
             } catch { clearInterval(interval); safeClose(); }
-          }, 1000);
+          }, 300);
         },
       }),
       {
@@ -362,6 +376,25 @@ export function registerRoutes(app, ctx) {
     const rootId = task.root_id || task.id;
     closeThread(rootId);
     return c.json({ status: "discarded" });
+  });
+
+  // --- Compact context ---
+  app.post("/task/:id/compact", async (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread has running tasks" }, 409);
+
+    const sessionId = task.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    if (!sessionId) return c.json({ error: "no session to compact" }, 400);
+
+    const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
+    const id = randomUUID().slice(0, 8);
+    const user = getCfUser(c);
+    stmts.insert.run(id, "[compact] コンテキスト圧縮", new Date().toISOString(), null, cwd, sessionId, task.id, rootId, null, user);
+    runClaude(id, "/compact", MAX_TURNS, sessionId, cwd);
+
+    return c.json({ id, status: "accepted", compacting: sessionId }, 202);
   });
 
   // --- Close thread (manual done, no changes) ---

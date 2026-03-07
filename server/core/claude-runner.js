@@ -38,6 +38,7 @@ export function createClaudeRunner(config) {
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
+      promptSuggestions: true,
       env: { ...process.env, ...getGhToken() },
       systemPrompt: { type: "preset", preset: "claude_code" },
       tools: { type: "preset", preset: "claude_code" },
@@ -52,6 +53,7 @@ export function createClaudeRunner(config) {
       let lastErrorText = "";
       let resultSubtype = null;
       let totalCostUsd = null;
+      let usageData = null;
 
       try {
         const conversation = query({ prompt, options: sdkOptions });
@@ -108,9 +110,28 @@ export function createClaudeRunner(config) {
               if (msg.subtype) resultSubtype = msg.subtype;
               if (msg.result) lastResultText = msg.result;
               if (msg.total_cost_usd != null) totalCostUsd = msg.total_cost_usd;
+              if (msg.usage) usageData = msg.usage;
+              if (msg.num_turns != null) {
+                liveData.events.push({
+                  type: "result_meta",
+                  cost_usd: msg.total_cost_usd,
+                  num_turns: msg.num_turns,
+                  duration_ms: msg.duration_ms,
+                  input_tokens: msg.usage?.input_tokens,
+                  output_tokens: msg.usage?.output_tokens,
+                });
+              }
               if (msg.is_error) {
                 lastErrorText = msg.result || (msg.errors && msg.errors.join("; ")) || "Unknown error";
               }
+              break;
+            }
+
+            case "prompt_suggestion": {
+              liveData.events.push({
+                type: "prompt_suggestion",
+                suggestion: msg.suggestion,
+              });
               break;
             }
 
@@ -179,6 +200,11 @@ export function createClaudeRunner(config) {
       } else {
         stmts.update.run("failed", completedAt, null, lastErrorText, capturedSessionId, eventsJson, taskId);
         console.log(`[${taskId}] failed - ${lastErrorText.slice(0, 100)}`);
+      }
+
+      // Save cost/usage
+      if (totalCostUsd != null || usageData) {
+        stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
       }
 
       // Callback

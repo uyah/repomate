@@ -274,6 +274,53 @@
 
   /* Cost display */
   .cost-badge { color: #666; font-size: 0.65rem; font-family: monospace; margin-left: 4px; }
+
+  /* Result meta bar (cost, tokens, turns) */
+  .evt-result-meta {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 6px 10px; margin: 6px 0; background: #0f0f12; border: 1px solid #1a1a2a;
+    border-radius: 6px; font-size: 0.7rem; font-family: monospace; color: #555;
+  }
+  .meta-item { display: flex; align-items: center; gap: 3px; }
+  .meta-label { color: #444; }
+  .meta-value { color: #888; }
+  .meta-cost { color: #fbbf24; }
+  .meta-tokens { color: #60a5fa; }
+
+  /* Prompt suggestion */
+  .evt-suggestion {
+    margin: 6px 0; padding: 6px 10px; background: #111118; border: 1px dashed #2a2a4a;
+    border-radius: 6px; cursor: pointer; transition: background 0.15s;
+  }
+  .evt-suggestion:hover { background: #1a1a2a; }
+  .evt-suggestion-label { font-size: 0.65rem; color: #8b6fc0; margin-bottom: 2px; }
+  .evt-suggestion-text { font-size: 0.8rem; color: #aaa; }
+
+  /* Context usage bar */
+  .context-bar {
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+    background: #0a0a0f; border-top: 1px solid #1a1a1a; font-size: 0.65rem; color: #555;
+  }
+  .context-bar-fill {
+    flex: 1; height: 4px; background: #1a1a1a; border-radius: 2px; overflow: hidden;
+  }
+  .context-bar-inner {
+    height: 100%; border-radius: 2px; transition: width 0.3s;
+  }
+  .context-bar-inner.low { background: #4ade80; }
+  .context-bar-inner.mid { background: #fbbf24; }
+  .context-bar-inner.high { background: #f87171; }
+
+  /* Compact button */
+  .compact-btn {
+    background: #1a1a2a; color: #60a5fa; border: 1px solid #2a2a4a;
+    border-radius: 6px; padding: 3px 8px; font-size: 0.65rem; cursor: pointer;
+  }
+  .compact-btn:hover { background: #2a2a3a; }
+  .compact-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Session info */
+  .session-info { font-size: 0.65rem; color: #444; font-family: monospace; padding: 2px 10px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 </head>
@@ -329,7 +376,9 @@
         <div class="detail-actions" id="detailActions"></div>
       </div>
       <div id="detailDevBar"></div>
+      <div id="detailSessionInfo"></div>
       <div class="detail-body" id="detailBody"></div>
+      <div id="detailContextBar"></div>
       <div class="detail-reply" id="detailReply" style="display:none">
         <div class="file-preview" id="detailFilePreview"></div>
         <div class="input-row">
@@ -444,6 +493,10 @@ function renderEvents(events) {
       items.push({ type: 'thinking', text: e.text });
     } else if (e.type === 'system') {
       items.push({ type: 'system', subtype: e.subtype, model: e.model, pre_tokens: e.pre_tokens });
+    } else if (e.type === 'result_meta') {
+      items.push({ type: 'result_meta', ...e });
+    } else if (e.type === 'prompt_suggestion') {
+      items.push({ type: 'prompt_suggestion', suggestion: e.suggestion });
     } else if (e.type === 'tool_use') {
       const next = events[i + 1];
       const result = (next && next.type === 'tool_result') ? next : null;
@@ -460,6 +513,8 @@ function renderEvents(events) {
       prev.calls.push(item);
     } else if (item.type === 'tool') {
       grouped.push({ type: 'tool_group', name: item.name, calls: [item] });
+    } else if (item.type === 'result_meta' || item.type === 'prompt_suggestion' || item.type === 'text' || item.type === 'thinking' || item.type === 'system') {
+      grouped.push(item);
     } else {
       grouped.push(item);
     }
@@ -482,6 +537,22 @@ function renderEvents(events) {
       } else if (g.subtype === 'compact_boundary') {
         html += `<div class="evt-system"><span class="compact-badge">compact</span> ${g.pre_tokens ? g.pre_tokens.toLocaleString() + ' tokens' : ''}</div>`;
       }
+    } else if (g.type === 'result_meta') {
+      const cost = g.cost_usd != null ? `$${g.cost_usd.toFixed(4)}` : '';
+      const tokens = (g.input_tokens || g.output_tokens) ? `${(g.input_tokens||0).toLocaleString()}→${(g.output_tokens||0).toLocaleString()}` : '';
+      const turns = g.num_turns ? `${g.num_turns} turns` : '';
+      const duration = g.duration_ms ? `${(g.duration_ms/1000).toFixed(1)}s` : '';
+      html += `<div class="evt-result-meta">
+        ${cost ? `<span class="meta-item"><span class="meta-label">cost</span> <span class="meta-value meta-cost">${cost}</span></span>` : ''}
+        ${tokens ? `<span class="meta-item"><span class="meta-label">tokens</span> <span class="meta-value meta-tokens">${tokens}</span></span>` : ''}
+        ${turns ? `<span class="meta-item"><span class="meta-value">${turns}</span></span>` : ''}
+        ${duration ? `<span class="meta-item"><span class="meta-value">${duration}</span></span>` : ''}
+      </div>`;
+    } else if (g.type === 'prompt_suggestion') {
+      html += `<div class="evt-suggestion" onclick="useSuggestion(this)" data-suggestion="${esc(g.suggestion || '')}">
+        <div class="evt-suggestion-label">suggested next</div>
+        <div class="evt-suggestion-text">${esc(g.suggestion || '')}</div>
+      </div>`;
     } else if (g.type === 'tool_group' && g.calls.length === 1) {
       html += renderSingleTool(g.calls[0]);
     } else if (g.type === 'tool_group') {
@@ -577,6 +648,10 @@ function renderThreadItem(t) {
   const active = t.id === selectedThreadId ? ' active' : '';
   const closed = t.closedAt ? ' closed' : '';
 
+  // Calculate total cost for thread
+  const allCosts = [t.costUsd, ...(t.replies || []).map(r => r.costUsd)].filter(c => c != null);
+  const totalCost = allCosts.length > 0 ? allCosts.reduce((a, b) => a + b, 0) : null;
+
   return `<div class="thread-item${active}${closed}" onclick="openThread('${t.id}')">
     <div class="thread-item-header">
       <span class="thread-item-user">${esc(user)}</span>
@@ -587,6 +662,7 @@ function renderThreadItem(t) {
     <div class="thread-item-footer">
       <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'pr' ? 'PR' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
+      ${totalCost ? `<span class="cost-badge">$${totalCost.toFixed(3)}</span>` : ''}
       ${t.prUrl ? `<a class="pr-link-badge" href="${esc(t.prUrl)}" target="_blank" onclick="event.stopPropagation()">&#x1F517; PR</a>` : ''}
       ${(() => {
         const ds = devServersMap[t.id];
@@ -756,6 +832,39 @@ function renderDetail(t) {
   }
   document.getElementById('detailBody').innerHTML = html;
 
+  // Thread cost & session info
+  const allCosts = [t.costUsd, ...(t.replies || []).map(r => r.costUsd)].filter(c => c != null);
+  const totalCost = allCosts.length > 0 ? allCosts.reduce((a, b) => a + b, 0) : null;
+  const allUsage = [t.usage, ...(t.replies || []).map(r => r.usage)].filter(u => u != null);
+  const totalInput = allUsage.reduce((s, u) => s + (u.input_tokens || 0), 0);
+  const totalOutput = allUsage.reduce((s, u) => s + (u.output_tokens || 0), 0);
+  const lastSession = (t.replies?.length ? t.replies[t.replies.length - 1] : t).sessionId;
+
+  // Context bar (estimate: ~200k context window)
+  const contextUsed = totalInput + totalOutput;
+  const contextLimit = 200000;
+  const contextPct = Math.min(100, Math.round(contextUsed / contextLimit * 100));
+  const ctxClass = contextPct > 70 ? 'high' : contextPct > 40 ? 'mid' : 'low';
+
+  let contextBarHtml = '';
+  if (contextUsed > 0 && !t.closedAt) {
+    contextBarHtml = `<div class="context-bar">
+      <span>${contextUsed.toLocaleString()} tokens (${contextPct}%)</span>
+      <div class="context-bar-fill"><div class="context-bar-inner ${ctxClass}" style="width:${contextPct}%"></div></div>
+      ${totalCost ? `<span class="meta-cost">$${totalCost.toFixed(3)}</span>` : ''}
+      ${lastSession && !hasRunning ? `<button class="compact-btn" onclick="compactThread('${last.id}')">compact</button>` : ''}
+    </div>`;
+  }
+  document.getElementById('detailContextBar').innerHTML = contextBarHtml;
+
+  // Session info
+  let sessionInfoHtml = '';
+  const initEvent = allTasks.flatMap(t => t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
+  if (initEvent) {
+    sessionInfoHtml = `<div class="session-info">${initEvent.model || '?'} · ${(initEvent.tools || []).length} tools</div>`;
+  }
+  document.getElementById('detailSessionInfo').innerHTML = sessionInfoHtml;
+
   // Reply input - always show unless closed
   const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
   const replyEl = document.getElementById('detailReply');
@@ -802,27 +911,52 @@ window.addEventListener('popstate', () => {
 });
 
 // === Streaming ===
+const streamEventCounts = new Map();
+
 function startStream(taskId) {
   if (streams.has(taskId)) return;
   const es = new EventSource(API + '/task/' + taskId + '/stream');
   streams.set(taskId, es);
+  streamEventCounts.set(taskId, 0);
+
   es.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
       const el = document.getElementById('events-' + taskId);
-      if (el && data.events && data.events.length > 0) {
-        el.innerHTML = renderEvents(data.events);
-      } else if (el && data.output) {
-        el.innerHTML = `<div class="msg-text">${esc(data.output)}</div>`;
+      if (!el) return;
+
+      if (data.events && data.events.length > 0) {
+        const prevCount = streamEventCounts.get(taskId) || 0;
+        // Full re-render only if events changed significantly
+        if (data.events.length !== prevCount) {
+          el.innerHTML = renderEvents(data.events);
+          streamEventCounts.set(taskId, data.events.length);
+          // Auto-scroll
+          const body = document.getElementById('detailBody');
+          if (body) {
+            const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 100;
+            if (atBottom) body.scrollTop = body.scrollHeight;
+          }
+        } else if (data.output) {
+          // Just update the streaming text at the end
+          const lastEvt = el.querySelector('.evt-text:last-child .md-content, .evt-text:last-child .msg-text');
+          if (lastEvt && data.output !== lastEvt.textContent) {
+            // Quick update — don't re-render all events
+          }
+        }
+      } else if (data.output) {
+        el.innerHTML = `<div class="evt-text">${renderMarkdown(data.output)}</div>`;
       }
+
       if (data.status !== 'running') {
         es.close();
         streams.delete(taskId);
+        streamEventCounts.delete(taskId);
         setTimeout(refresh, 500);
       }
     } catch {}
   };
-  es.onerror = () => { es.close(); streams.delete(taskId); };
+  es.onerror = () => { es.close(); streams.delete(taskId); streamEventCounts.delete(taskId); };
 }
 
 // === Data loading ===
@@ -1191,6 +1325,24 @@ async function toggleDevServer(taskId, start) {
   } catch (e) {
     devServerStarting.delete(rootId);
     alert('Dev server操作失敗: ' + e.message);
+  }
+}
+
+async function compactThread(taskId) {
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/compact', { method: 'POST' });
+    if (!res.ok) { const e = await res.json(); alert(e.error || 'Compact失敗'); return; }
+    setTimeout(refresh, 500);
+  } catch (e) { alert('Compact失敗: ' + e.message); }
+}
+
+function useSuggestion(el) {
+  const suggestion = el.dataset.suggestion;
+  if (!suggestion) return;
+  const input = document.getElementById('detailReplyInput');
+  if (input) {
+    input.value = suggestion;
+    input.focus();
   }
 }
 
