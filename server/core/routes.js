@@ -10,14 +10,13 @@ import { join, extname } from "path";
  */
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
-  const { runClaude, runClaudeSync, runningPids, liveOutputs } = runner;
+  const { startSession, sendToSession, captureOutput, hasSession, listActiveSessions, cancelSession, killSession } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
-  const MAX_TURNS = config.maxTurns;
 
   // --- Health ---
   app.get("/health", (c) => {
-    return c.json({ status: "ok", activeTasks: runningPids.size });
+    return c.json({ status: "ok", activeSessions: listActiveSessions().size });
   });
 
   // --- Public config (for dashboard) ---
@@ -101,23 +100,9 @@ export function registerRoutes(app, ctx) {
     const now = new Date().toISOString();
     stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
     if (branch) stmts.setThreadPr.run(null, branch, id);
-    runClaude(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd);
+    startSession(id, fullPrompt, worktreeCwd);
 
     return c.json({ id, status: "accepted" }, 202);
-  });
-
-  // --- Sync task ---
-  app.post("/task/sync", async (c) => {
-    const { prompt, maxTurns } = await c.req.json();
-    if (!prompt) return c.json({ error: "prompt is required" }, 400);
-
-    const id = randomUUID().slice(0, 8);
-    const worktreeCwd = createWorktree(id);
-    const user = getCfUser(c);
-    stmts.insert.run(id, prompt, new Date().toISOString(), null, worktreeCwd, null, null, id, null, user);
-
-    const task = await runClaudeSync(id, prompt, maxTurns || MAX_TURNS, null, worktreeCwd);
-    return c.json(task);
   });
 
   // --- Get task ---
@@ -154,13 +139,15 @@ export function registerRoutes(app, ctx) {
     const rows = db.prepare(listSql).all(...params);
     const totalPages = Math.ceil(total / limit) || 1;
 
+    const activeSessions = listActiveSessions();
     const threads = rows.map((row) => {
       const t = taskToJson(row);
       const replies = stmts.thread.all(row.id).filter((r) => r.id !== row.id);
       t.replies = replies.map(r => taskToJson(r));
+      const rootId = row.root_id || row.id;
+      t.sessionActive = activeSessions.has(`claude-${rootId}`);
       const lastTask = t.replies.length > 0 ? t.replies[t.replies.length - 1] : t;
-      const hasRunning = lastTask.status === "running" || t.replies.some(r => r.status === "running");
-      if (!hasRunning && lastTask.cwd) {
+      if (!t.sessionActive && lastTask.cwd) {
         const changes = getWorktreeChanges(lastTask.cwd);
         if (changes) t.worktreeChanges = changes;
       }
@@ -188,15 +175,13 @@ export function registerRoutes(app, ctx) {
     return c.json({ threads, total, page, totalPages, users });
   });
 
-  // --- Reply to task ---
+  // --- Reply to task (send message to existing tmux session) ---
   app.post("/task/:id/reply", async (c) => {
     const original = stmts.get.get(c.req.param("id"));
     if (!original) return c.json({ error: "not found" }, 404);
-    if (original.status === "running") return c.json({ error: "task is still running" }, 409);
     const rootId = original.root_id || original.id;
-    if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const { prompt, maxTurns, files } = await c.req.json();
+    const { prompt, files } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
     let displayPrompt = prompt;
@@ -210,97 +195,65 @@ export function registerRoutes(app, ctx) {
       }
     }
 
+    // Record the reply in DB for history
     const id = randomUUID().slice(0, 8);
-    // Look up session and cwd from the whole thread, not just the last task
-    const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
-    stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
-    runClaude(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd);
+    const now = new Date().toISOString();
+    stmts.insert.run(id, displayPrompt, now, null, cwd, null, original.id, rootId, null, user);
 
-    return c.json({ id, status: "accepted", resuming: sessionId }, 202);
+    // Send to tmux session
+    if (hasSession(rootId)) {
+      sendToSession(rootId, fullPrompt);
+      stmts.update.run("completed", now, null, null, null, null, id);
+    } else {
+      // Session gone — start a new one
+      startSession(rootId, fullPrompt, cwd);
+    }
+
+    return c.json({ id, status: "accepted" }, 202);
   });
 
-  // --- SSE stream ---
-  app.get("/task/:id/stream", (c) => {
-    const taskId = c.req.param("id");
-    const task = stmts.get.get(taskId);
+  // --- Terminal output (capture-pane) ---
+  app.get("/task/:id/output", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
-
-    return new Response(
-      new ReadableStream({
-        start(controller) {
-          const enc = new TextEncoder();
-          const send = (data) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
-
-          let closed = false;
-          const safeClose = () => { if (!closed) { closed = true; try { controller.close(); } catch {} } };
-          const interval = setInterval(() => {
-            if (closed) { clearInterval(interval); return; }
-            try {
-              const current = stmts.get.get(taskId);
-              const live = liveOutputs.get(taskId);
-              if (!current) { clearInterval(interval); safeClose(); return; }
-
-              send({
-                status: current.status === "running" ? "running" : current.status,
-                output: live?.lastText || current.result || "",
-                events: live?.events || null,
-                error: current.error,
-              });
-
-              if (current.status !== "running") {
-                clearInterval(interval);
-                safeClose();
-              }
-            } catch { clearInterval(interval); safeClose(); }
-          }, 1000);
-        },
-      }),
-      {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      }
-    );
+    const rootId = task.root_id || task.id;
+    const output = captureOutput(rootId);
+    const active = hasSession(rootId);
+    return c.json({ output, active });
   });
 
-  // --- Cancel task ---
+  // --- Cancel (interrupt) current Claude action ---
   app.delete("/task/:id", (c) => {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
-    const pid = runningPids.get(task.id);
-    if (pid) {
-      try { process.kill(pid, "SIGTERM"); } catch {}
-      stmts.update.run("cancelled", new Date().toISOString(), null, null, task.session_id, null, task.id);
-      runningPids.delete(task.id);
-      liveOutputs.delete(task.id);
-    }
-    return c.json({ status: "cancelled" });
+    const rootId = task.root_id || task.id;
+    cancelSession(rootId);
+    return c.json({ status: "interrupted" });
   });
 
-  // --- Retry task ---
+  // --- Retry task (re-send prompt to session or start new session) ---
   app.post("/task/:id/retry", async (c) => {
     const original = stmts.get.get(c.req.param("id"));
     if (!original) return c.json({ error: "not found" }, 404);
-    if (original.status === "running") return c.json({ error: "task is still running" }, 409);
 
     const rootId = original.root_id || original.id;
-    if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
-
-    // Resume session if available (check whole thread), otherwise re-run the prompt
-    const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const id = randomUUID().slice(0, 8);
     const prompt = original.prompt;
-
     const user = getCfUser(c);
-    stmts.insert.run(id, `[retry] ${prompt}`, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, original.slack_thread_key || null, user);
-    runClaude(id, prompt, MAX_TURNS, sessionId, cwd);
+    const now = new Date().toISOString();
+    stmts.insert.run(id, `[retry] ${prompt}`, now, null, cwd, null, original.id, rootId, original.slack_thread_key || null, user);
 
-    return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId }, 202);
+    if (hasSession(rootId)) {
+      sendToSession(rootId, prompt);
+      stmts.update.run("completed", now, null, null, null, null, id);
+    } else {
+      startSession(rootId, prompt, cwd);
+    }
+
+    return c.json({ id, status: "accepted", retrying: original.id }, 202);
   });
 
   // --- Merge worktree ---
@@ -407,7 +360,7 @@ export function registerRoutes(app, ctx) {
       tmuxSessions: tmuxSessions.split("\n"),
       claudeProcesses: claudeProcesses.split("\n").filter(Boolean),
       tasks: {
-        total, running: runningPids.size,
+        total, running: listActiveSessions().size,
         completed: statusCounts.completed || 0, failed: statusCounts.failed || 0,
         done: stmts.countDone.get().c,
         waiting: stmts.countWaiting.get().c,

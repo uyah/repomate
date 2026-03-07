@@ -87,6 +87,8 @@
   .badge-completed { background: #1a3a1a; color: #4ade80; }
   .badge-waiting { background: #3a3a1a; color: #fbbf24; }
   .badge-done { background: #1a3a1a; color: #4ade80; }
+  .badge-active { background: #1a3a2a; color: #4ade80; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
   .badge-pr { background: #1a2a3a; color: #60a5fa; }
   .pr-link-badge { font-size: 0.6rem; color: #60a5fa; text-decoration: none; margin-left: auto; }
   .pr-link-badge:hover { text-decoration: underline; }
@@ -449,10 +451,10 @@ function toggleTool(id) {
 
 // === List: compact thread item ===
 function getThreadStatus(t) {
-  const rawStatus = t.replies?.length ? t.replies[t.replies.length - 1].status : t.status;
   if (t.closedAt) return 'done';
   if (t.prUrl) return 'pr';
-  // Non-running finished states → "waiting for user reply"
+  if (t.sessionActive) return 'active';
+  const rawStatus = t.replies?.length ? t.replies[t.replies.length - 1].status : t.status;
   if (['completed', 'max_turns'].includes(rawStatus)) return 'waiting';
   return rawStatus;
 }
@@ -482,7 +484,7 @@ function renderThreadItem(t) {
     ${t.branch ? `<div style="font-size:0.6rem;color:#60a5fa;margin-bottom:2px">🌿 ${esc(t.branch)}</div>` : ''}
     <div class="thread-item-prompt">${esc(prompt)}</div>
     <div class="thread-item-footer">
-      <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'pr' ? 'PR' : status}</span>
+      <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'active' ? '実行中' : status === 'pr' ? 'PR' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
       ${t.prUrl ? `<a class="pr-link-badge" href="${esc(t.prUrl)}" target="_blank" onclick="event.stopPropagation()">&#x1F517; PR</a>` : ''}
       ${(() => {
@@ -582,14 +584,12 @@ function renderDetail(t) {
   document.getElementById('detailTitle').textContent = prompt || '(タスク)';
 
   // Action buttons
-  const hasRunning = t.status === 'running' || t.replies?.some(r => r.status === 'running');
-  const runningId = hasRunning ? (t.replies?.find(r => r.status === 'running')?.id || (t.status === 'running' ? t.id : null)) : null;
   let actionsHtml = '';
-  if (runningId) {
-    actionsHtml = `<button class="detail-cancel-btn" onclick="cancelTask('${runningId}')">キャンセル</button>`;
+  if (t.sessionActive) {
+    actionsHtml = `<button class="detail-cancel-btn" onclick="cancelTask('${t.id}')">中断</button>`;
   }
   const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
-  if (!hasRunning && !t.closedAt) {
+  if (!t.sessionActive && !t.closedAt) {
     if (t.prUrl) {
       actionsHtml += `<div class="wt-changes">
         <a href="${esc(t.prUrl)}" target="_blank" class="wt-btn" style="background:#1a2a3a;color:#60a5fa;text-decoration:none">PR を見る ↗</a>
@@ -644,14 +644,14 @@ function renderDetail(t) {
   // Dev server bar (fixed in header area)
   document.getElementById('detailDevBar').innerHTML = devBarHtml;
 
-  // Messages
-  const allTasks = [t, ...(t.replies || [])];
-  let html = '';
-  for (let i = 0; i < allTasks.length; i++) {
-    const isLast = i === allTasks.length - 1;
-    html += renderDetailMsg(allTasks[i], i > 0, isLast);
+  // Terminal output
+  const body = document.getElementById('detailBody');
+  if (!body.querySelector('#terminalOutput')) {
+    body.innerHTML = '<pre id="terminalOutput" style="margin:0;padding:12px 16px;font-size:0.82rem;line-height:1.5;color:#ccc;white-space:pre-wrap;word-break:break-word;min-height:100%"></pre>';
   }
-  document.getElementById('detailBody').innerHTML = html;
+
+  // Start polling terminal output
+  startOutputPolling(t.id);
 
   // Reply input - always show unless closed
   const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
@@ -665,7 +665,6 @@ function renderDetail(t) {
 
   // Scroll to bottom only on first open or thread change
   if (selectedThreadId !== prevSelectedThreadId) {
-    const body = document.getElementById('detailBody');
     body.scrollTop = body.scrollHeight;
   }
 
@@ -676,6 +675,7 @@ function renderDetail(t) {
 function closeDetail() {
   selectedThreadId = null;
   if (devLogsInterval) { clearInterval(devLogsInterval); devLogsInterval = null; }
+  stopOutputPolling();
   history.pushState(null, '', '/');
   const pane = document.getElementById('detailPane');
   pane.classList.add('empty-state');
@@ -683,6 +683,50 @@ function closeDetail() {
   document.getElementById('detailContent').style.display = 'none';
   document.getElementById('detailEmpty').style.display = '';
   renderList();
+}
+
+// === Terminal output polling ===
+let outputPollInterval = null;
+let outputPollTaskId = null;
+let lastOutputLength = 0;
+
+function startOutputPolling(taskId) {
+  stopOutputPolling();
+  outputPollTaskId = taskId;
+  lastOutputLength = 0;
+  fetchOutput(taskId); // immediate first fetch
+  outputPollInterval = setInterval(() => fetchOutput(taskId), 2000);
+}
+
+function stopOutputPolling() {
+  if (outputPollInterval) { clearInterval(outputPollInterval); outputPollInterval = null; }
+  outputPollTaskId = null;
+}
+
+async function fetchOutput(taskId) {
+  if (taskId !== outputPollTaskId) return;
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/output');
+    if (!res.ok) return;
+    const data = await res.json();
+    const el = document.getElementById('terminalOutput');
+    if (!el) return;
+    const output = data.output || '(出力なし)';
+    el.textContent = output;
+    // Auto-scroll if user is near the bottom
+    const body = document.getElementById('detailBody');
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 100;
+    if (nearBottom && output.length !== lastOutputLength) {
+      body.scrollTop = body.scrollHeight;
+    }
+    lastOutputLength = output.length;
+    // Stop polling if session ended
+    if (!data.active) {
+      // Keep last output visible, reduce polling frequency
+      clearInterval(outputPollInterval);
+      outputPollInterval = setInterval(() => fetchOutput(taskId), 10000);
+    }
+  } catch {}
 }
 
 function openThread(id) {

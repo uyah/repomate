@@ -1,158 +1,186 @@
-import { spawn } from "child_process";
+import { execSync } from "child_process";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
+
+function stripAnsi(str) {
+  return str.replace(/[\x1B\x9B][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]/g, "");
+}
 
 /**
- * Create a Claude runner with process management.
- * @param {object} config
- * @param {object} config.stmts - DB prepared statements
- * @param {object} config.db - SQLite database instance
- * @param {function} config.taskToJson - taskToJson helper
- * @param {function} config.getGhToken - returns env with GH_TOKEN
- * @param {string} config.repoDir - default working directory
- * @param {number} config.maxTurns - default max turns
+ * Create a Claude runner using persistent tmux sessions.
+ * Each thread gets its own tmux session running Claude Code interactively.
  */
 export function createClaudeRunner(config) {
-  const { stmts, db, taskToJson, getGhToken, repoDir, maxTurns } = config;
-  const runningPids = new Map();
-  const liveOutputs = new Map();
+  const { stmts, db, getGhToken, repoDir } = config;
+  const logsDir = config.logsDir;
+  if (logsDir) mkdirSync(logsDir, { recursive: true });
 
-  function runClaude(taskId, prompt, turns, sessionId, cwd) {
-    const args = ["-p", prompt, "--max-turns", String(turns), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"];
-    if (sessionId) args.push("--resume", sessionId);
+  const monitors = new Map(); // rootId → intervalId
 
-    const proc = spawn("claude", args, {
-      cwd: cwd || repoDir,
-      env: { ...process.env, ...getGhToken() },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+  function sn(rootId) { return `claude-${rootId}`; }
 
-    runningPids.set(taskId, proc.pid);
-    const existingTask = stmts.get.get(taskId);
-    const prevEvents = existingTask?.events_json ? JSON.parse(existingTask.events_json) : [];
-    const liveData = { events: [...prevEvents], lastText: "" };
-    liveOutputs.set(taskId, liveData);
-    let fullStdout = "";
-    let stderr = "";
-    let lastResultText = "";
-    let lastErrorText = "";
-    let capturedSessionId = sessionId;
-    let resultSubtype = null;
+  function logFile(rootId) {
+    return logsDir ? join(logsDir, `${rootId}.log`) : null;
+  }
 
-    proc.on("error", (err) => {
-      console.error(`[${taskId}] spawn error: ${err.message}`);
-      runningPids.delete(taskId);
-      liveOutputs.delete(taskId);
-      stmts.update.run("failed", new Date().toISOString(), null, `spawn error: ${err.message}`, capturedSessionId, null, taskId);
-    });
+  /** Check if a tmux session exists for this thread. */
+  function hasSession(rootId) {
+    try {
+      execSync(`tmux has-session -t '${sn(rootId)}' 2>/dev/null`, { stdio: "pipe" });
+      return true;
+    } catch { return false; }
+  }
 
-    proc.stdout.on("data", (d) => {
-      const chunk = d.toString();
-      fullStdout += chunk;
+  /** List all active claude-* session names (one execSync call). */
+  function listActiveSessions() {
+    try {
+      const out = execSync("tmux list-sessions -F '#{session_name}' 2>/dev/null", { encoding: "utf-8" });
+      return new Set(out.trim().split("\n").filter(s => s.startsWith("claude-")));
+    } catch { return new Set(); }
+  }
 
-      for (const line of chunk.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
+  /** Start a new tmux session with Claude Code, then send the initial prompt. */
+  function startSession(rootId, prompt, cwd) {
+    if (hasSession(rootId)) {
+      sendToSession(rootId, prompt);
+      return;
+    }
 
-          if (evt.type === "assistant" && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === "text") {
-                lastResultText = block.text;
-                liveData.events.push({ type: "text", text: block.text });
-              } else if (block.type === "tool_use") {
-                liveData.events.push({ type: "tool_use", name: block.name, input: block.input });
-              }
-            }
-          } else if (evt.type === "user" && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === "tool_result") {
-                const content = Array.isArray(block.content) ? block.content.map(c => c.text || "").join("") : String(block.content || "");
-                liveData.events.push({ type: "tool_result", tool_use_id: block.tool_use_id, content: content.slice(0, 2000) });
-              }
-            }
-          } else if (evt.type === "result") {
-            if (evt.session_id) capturedSessionId = evt.session_id;
-            if (evt.subtype) resultSubtype = evt.subtype;
-            if (evt.result) lastResultText = evt.result;
-            if (evt.is_error) lastErrorText = evt.result || (evt.errors && evt.errors.join("; ")) || "Unknown error";
-          }
-        } catch {}
+    const name = sn(rootId);
+    const ghEnv = getGhToken();
+    const env = { ...process.env, ...ghEnv };
+    const escapedCwd = cwd.replace(/'/g, "'\\''");
+
+    try {
+      execSync(
+        `tmux new-session -d -s '${name}' -x 220 -y 50 "cd '${escapedCwd}' && claude --dangerously-skip-permissions"`,
+        { env, stdio: "pipe" },
+      );
+      execSync(`tmux set-option -t '${name}' history-limit 50000`, { stdio: "pipe" });
+      // Persistent log via pipe-pane
+      const lf = logFile(rootId);
+      if (lf) {
+        writeFileSync(lf, "");
+        execSync(`tmux pipe-pane -t '${name}' -o 'cat >> "${lf}"'`, { stdio: "pipe" });
       }
-      liveData.lastText = lastResultText;
-    });
-    proc.stderr.on("data", (d) => { stderr += d; });
+    } catch (err) {
+      console.error(`[tmux] Failed to start ${name}: ${err.message}`);
+      stmts.update.run("failed", new Date().toISOString(), null, err.message, null, null, rootId);
+      return;
+    }
 
-    proc.on("close", async (code) => {
-      runningPids.delete(taskId);
-      liveOutputs.delete(taskId);
-      const completedAt = new Date().toISOString();
+    console.log(`[tmux] Started ${name} in ${cwd}`);
+    waitAndSend(rootId, prompt);
+    monitorSession(rootId);
+  }
 
-      // Auto-retry without --resume if session not found
-      if (sessionId && lastErrorText && lastErrorText.includes("No conversation found")) {
-        console.log(`[${taskId}] Session not found, retrying without --resume`);
-        stmts.update.run("failed", completedAt, null, lastErrorText, null, null, taskId);
-        runClaude(taskId, prompt, turns, null, cwd);
+  /** Wait for Claude to show output (ready), then send the initial prompt. */
+  function waitAndSend(rootId, prompt) {
+    let attempts = 0;
+    const iv = setInterval(() => {
+      attempts++;
+      if (!hasSession(rootId) || attempts > 30) {
+        clearInterval(iv);
         return;
       }
-
-      const eventsJson = liveData.events.length > 0 ? JSON.stringify(liveData.events) : null;
-
-      if (resultSubtype === "error_max_turns") {
-        const result = lastResultText || fullStdout;
-        stmts.update.run("max_turns", completedAt, result, "max turns reached", capturedSessionId, eventsJson, taskId);
-      } else if (code === 0 && !lastErrorText) {
-        const result = lastResultText || fullStdout;
-        stmts.update.run("completed", completedAt, result, null, capturedSessionId, eventsJson, taskId);
-      } else {
-        const error = lastErrorText || stderr || lastResultText || "(Claude exited with no output)";
-        stmts.update.run("failed", completedAt, null, error, capturedSessionId, eventsJson, taskId);
+      const out = captureOutput(rootId, 5);
+      if (out && out.trim().length > 5) {
+        clearInterval(iv);
+        setTimeout(() => sendToSession(rootId, prompt), 1000);
       }
-
-      // Callback
-      const task = stmts.get.get(taskId);
-      if (task?.callback) {
-        try {
-          await fetch(task.callback, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: taskId, status: task.status, result: task.result, error: task.error }),
-          });
-        } catch (e) {
-          console.error(`Callback failed for ${taskId}: ${e.message}`);
-        }
-      }
-
-      const finalStatus = resultSubtype === "error_max_turns" ? "max_turns" : (code === 0 ? "completed" : "failed");
-      console.log(`[${taskId}] ${finalStatus} (exit ${code}) - ${prompt.slice(0, 80)}`);
-    });
-
-    return proc;
+    }, 1000);
   }
 
-  function runClaudeSync(taskId, prompt, turns, sessionId, cwd) {
-    return new Promise((resolve) => {
-      runClaude(taskId, prompt, turns, sessionId, cwd);
-      const check = setInterval(() => {
-        const task = stmts.get.get(taskId);
-        if (task && task.status !== "running") {
-          clearInterval(check);
-          resolve(taskToJson(task));
-        }
-      }, 1000);
-    });
+  /** Send a message to an existing tmux session via load-buffer + paste-buffer. */
+  function sendToSession(rootId, message) {
+    const name = sn(rootId);
+    if (!hasSession(rootId)) return false;
+    try {
+      execSync("tmux load-buffer -", { input: message, stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`tmux paste-buffer -t '${name}'`, { stdio: "pipe" });
+      execSync(`tmux send-keys -t '${name}' Enter`, { stdio: "pipe" });
+      return true;
+    } catch (err) {
+      console.error(`[tmux] Send failed for ${name}: ${err.message}`);
+      return false;
+    }
   }
 
+  /** Capture terminal output. Falls back to log file if session is gone. */
+  function captureOutput(rootId, lines = 1000) {
+    const name = sn(rootId);
+    if (hasSession(rootId)) {
+      try {
+        return execSync(`tmux capture-pane -t '${name}' -p -S -${lines}`, {
+          encoding: "utf-8", timeout: 5000,
+        });
+      } catch {}
+    }
+    // Fall back to log file
+    const lf = logFile(rootId);
+    if (lf && existsSync(lf)) {
+      try {
+        const content = readFileSync(lf, "utf-8");
+        const cleaned = stripAnsi(content);
+        const allLines = cleaned.split("\n");
+        return allLines.slice(-lines).join("\n");
+      } catch {}
+    }
+    return null;
+  }
+
+  /** Send Ctrl+C to interrupt Claude's current action. */
+  function cancelSession(rootId) {
+    if (!hasSession(rootId)) return;
+    try {
+      execSync(`tmux send-keys -t '${sn(rootId)}' C-c C-c`, { stdio: "pipe" });
+    } catch {}
+  }
+
+  /** Kill the tmux session entirely. */
+  function killSession(rootId) {
+    try { execSync(`tmux kill-session -t '${sn(rootId)}'`, { stdio: "pipe" }); } catch {}
+    const m = monitors.get(rootId);
+    if (m) { clearInterval(m); monitors.delete(rootId); }
+  }
+
+  /** Monitor a session; mark thread completed when session ends. */
+  function monitorSession(rootId) {
+    if (monitors.has(rootId)) return;
+    const iv = setInterval(() => {
+      if (!hasSession(rootId)) {
+        clearInterval(iv);
+        monitors.delete(rootId);
+        const now = new Date().toISOString();
+        const root = stmts.get.get(rootId);
+        if (root?.status === "running") {
+          stmts.update.run("completed", now, null, null, null, null, rootId);
+        }
+        for (const t of stmts.thread.all(rootId)) {
+          if (t.status === "running") {
+            stmts.update.run("completed", now, null, null, null, null, t.id);
+          }
+        }
+        console.log(`[tmux] Session ${sn(rootId)} ended`);
+      }
+    }, 5000);
+    monitors.set(rootId, iv);
+  }
+
+  /** On startup, reconnect monitors to existing sessions. */
   function resumeStaleTasks() {
-    const staleTasks = db.prepare(`SELECT * FROM tasks WHERE status IN ('running', 'max_turns')`).all();
-    if (staleTasks.length === 0) return;
-    console.log(`[startup] Found ${staleTasks.length} interrupted task(s) from previous run`);
-    for (const task of staleTasks) {
-      if (task.session_id) {
-        console.log(`[startup] Resuming task ${task.id} (session: ${task.session_id})`);
-        const prompt = "続けてください (auto-resumed after server restart)";
-        runClaude(task.id, prompt, maxTurns, task.session_id, task.cwd || repoDir);
+    const stale = db.prepare("SELECT * FROM tasks WHERE status = 'running' AND parent_id IS NULL").all();
+    if (!stale.length) return;
+    const active = listActiveSessions();
+    console.log(`[startup] Checking ${stale.length} session(s), ${active.size} tmux session(s) found`);
+    for (const task of stale) {
+      const rootId = task.root_id || task.id;
+      if (active.has(sn(rootId))) {
+        console.log(`[startup] ${sn(rootId)} active, resuming monitor`);
+        monitorSession(rootId);
       } else {
-        console.log(`[startup] Marking task ${task.id} as interrupted (no session_id)`);
-        stmts.update.run("interrupted", new Date().toISOString(), null, "server restarted", null, null, task.id);
+        console.log(`[startup] ${sn(rootId)} gone, marking completed`);
+        stmts.update.run("completed", new Date().toISOString(), null, null, null, null, task.id);
       }
     }
   }
@@ -161,23 +189,20 @@ export function createClaudeRunner(config) {
   function gracefulShutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[shutdown] ${signal} received, saving running tasks...`);
-
-    const now = new Date().toISOString();
-    for (const [taskId, pid] of runningPids.entries()) {
-      const liveData = liveOutputs.get(taskId);
-      const eventsJson = liveData?.events?.length > 0 ? JSON.stringify(liveData.events) : null;
-      const task = stmts.get.get(taskId);
-      if (task) {
-        db.prepare(`UPDATE tasks SET events_json = ? WHERE id = ?`).run(eventsJson, taskId);
-      }
-      try { process.kill(pid, "SIGTERM"); } catch {}
-      console.log(`[shutdown] Killed claude process ${pid} for task ${taskId}`);
-    }
-
-    console.log(`[shutdown] ${runningPids.size} task(s) will auto-resume on next startup`);
-    setTimeout(() => process.exit(0), 1000);
+    console.log(`[shutdown] ${signal} — clearing monitors (tmux sessions persist)`);
+    for (const [, iv] of monitors) clearInterval(iv);
+    monitors.clear();
+    setTimeout(() => process.exit(0), 500);
   }
 
-  return { runClaude, runClaudeSync, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
+  // Legacy stubs for db.js taskToJson compatibility
+  const runningPids = new Map();
+  const liveOutputs = new Map();
+
+  return {
+    startSession, sendToSession, captureOutput,
+    hasSession, listActiveSessions, cancelSession, killSession,
+    monitorSession, resumeStaleTasks, gracefulShutdown,
+    runningPids, liveOutputs,
+  };
 }

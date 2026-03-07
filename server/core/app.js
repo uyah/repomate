@@ -49,6 +49,7 @@ export async function createApp(config) {
   });
 
   // --- Initialize Claude runner ---
+  const logsDir = config.logsDir || join(repoDir, ".automation", "logs");
   const runner = createClaudeRunner({
     stmts,
     db,
@@ -56,6 +57,7 @@ export async function createApp(config) {
     getGhToken: worktrees.getGhToken,
     repoDir,
     maxTurns,
+    logsDir,
   });
 
   // --- Reverse proxy for dev server subdomains ---
