@@ -34,6 +34,8 @@ export function createDatabase(dbPath, runtime) {
   try { db.exec(`ALTER TABLE tasks ADD COLUMN events_json TEXT`); } catch {}
   try { db.exec(`ALTER TABLE tasks ADD COLUMN created_by TEXT`); } catch {}
   try { db.exec(`ALTER TABLE tasks ADD COLUMN closed_at TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE tasks ADD COLUMN pr_url TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE tasks ADD COLUMN branch TEXT`); } catch {}
 
   // --- Users table ---
   db.exec(`
@@ -72,6 +74,7 @@ export function createDatabase(dbPath, runtime) {
     latestSessionInThread: db.prepare(`SELECT session_id FROM tasks WHERE root_id = ? AND session_id IS NOT NULL ORDER BY started_at DESC LIMIT 1`),
     latestCwdInThread: db.prepare(`SELECT cwd FROM tasks WHERE root_id = ? AND cwd IS NOT NULL ORDER BY started_at DESC LIMIT 1`),
     closeThread: db.prepare(`UPDATE tasks SET closed_at = ? WHERE id = ? OR root_id = ?`),
+    setThreadPr: db.prepare(`UPDATE tasks SET pr_url = ?, branch = ? WHERE id = ?`),
     countDone: db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL AND parent_id IS NULL`),
     countWaiting: db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE t.parent_id IS NULL AND t.closed_at IS NULL AND t.status != 'running' AND NOT EXISTS (SELECT 1 FROM tasks r WHERE r.root_id = t.id AND r.status = 'running')`),
     // Dev servers
@@ -100,6 +103,7 @@ export function createDatabase(dbPath, runtime) {
       result: row.result, error: row.error, sessionId: row.session_id,
       parentId: row.parent_id, rootId: row.root_id,
       callback: row.callback, cwd: row.cwd, createdBy: row.created_by || null, closedAt: row.closed_at || null,
+      prUrl: row.pr_url || null, branch: row.branch || null,
       pid: runningPids.get(row.id) || null,
       output: liveOutputs.get(row.id)?.lastText || null,
       events: liveOutputs.get(row.id)?.events || (row.events_json ? JSON.parse(row.events_json) : null),

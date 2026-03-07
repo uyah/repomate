@@ -87,6 +87,9 @@
   .badge-completed { background: #1a3a1a; color: #4ade80; }
   .badge-waiting { background: #3a3a1a; color: #fbbf24; }
   .badge-done { background: #1a3a1a; color: #4ade80; }
+  .badge-pr { background: #1a2a3a; color: #60a5fa; }
+  .pr-link-badge { font-size: 0.6rem; color: #60a5fa; text-decoration: none; margin-left: auto; }
+  .pr-link-badge:hover { text-decoration: underline; }
   .badge-failed { background: #3a1a1a; color: #f87171; }
   .badge-cancelled { background: #3a3a1a; color: #fbbf24; }
   .badge-interrupted { background: #2a2a2a; color: #888; }
@@ -444,6 +447,7 @@ function toggleTool(id) {
 function getThreadStatus(t) {
   const rawStatus = t.replies?.length ? t.replies[t.replies.length - 1].status : t.status;
   if (t.closedAt) return 'done';
+  if (t.prUrl) return 'pr';
   // Non-running finished states → "waiting for user reply"
   if (['completed', 'max_turns'].includes(rawStatus)) return 'waiting';
   return rawStatus;
@@ -473,8 +477,9 @@ function renderThreadItem(t) {
     </div>
     <div class="thread-item-prompt">${esc(prompt)}</div>
     <div class="thread-item-footer">
-      <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status}</span>
+      <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'pr' ? 'PR' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
+      ${t.prUrl ? `<a class="pr-link-badge" href="${esc(t.prUrl)}" target="_blank" onclick="event.stopPropagation()">&#x1F517; PR</a>` : ''}
       ${(() => {
         const ds = devServersMap[t.id];
         if (!ds || t.closedAt) return '';
@@ -580,7 +585,12 @@ function renderDetail(t) {
   }
   const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
   if (!hasRunning && !t.closedAt) {
-    if (t.worktreeChanges) {
+    if (t.prUrl) {
+      actionsHtml += `<div class="wt-changes">
+        <a href="${esc(t.prUrl)}" target="_blank" class="wt-btn" style="background:#1a2a3a;color:#60a5fa;text-decoration:none">PR を見る ↗</a>
+        <button class="wt-btn wt-done" onclick="closeThreadUI('${lastTaskId}', this)">Done</button>
+      </div>`;
+    } else if (t.worktreeChanges) {
       actionsHtml += `<div class="wt-changes">
         <div class="wt-changes-summary">${t.worktreeChanges.files.length}ファイル変更あり</div>
         <button class="wt-btn wt-merge" onclick="mergeTask('${lastTaskId}')">mainにマージ</button>
@@ -990,7 +1000,6 @@ async function createPr(taskId) {
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }
     if (data.prUrl) window.open(data.prUrl, '_blank');
-    closeDetail();
     refresh();
   } catch (e) { alert('PR作成失敗: ' + e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }

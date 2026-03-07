@@ -329,7 +329,6 @@ export function registerRoutes(app, ctx) {
     if (!changes) return c.json({ error: "no changes" }, 400);
 
     const rootId = task.root_id || task.id;
-    const rootTask = task.root_id ? stmts.get.get(task.root_id) : task;
 
     // Collect all prompts in the thread for context
     const threadTasks = stmts.thread.all(rootId);
@@ -345,7 +344,9 @@ export function registerRoutes(app, ctx) {
 
     const result = createPullRequest(cwd, rootId, title, body);
     if (result.ok) {
-      closeThread(rootId);
+      // Save PR URL on root task but don't close thread — thread stays open until merged
+      stmts.setThreadPr.run(result.prUrl, result.branch, rootId);
+      stopDevServer(rootId);
       return c.json({ status: "pr_created", prUrl: result.prUrl, branch: result.branch });
     }
     return c.json({ error: `PR creation failed: ${result.error}` }, 500);
