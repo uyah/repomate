@@ -127,11 +127,11 @@ export function createWorktreeManager(config) {
 
     const port = allocatePort();
     const subdomain = `task-${taskId}`;
-    const cmd = devServerConfig.command || "npm run dev";
-    const [bin, ...args] = cmd.split(" ");
+    const cmd = (devServerConfig.command || "npm run dev -- -p $PORT")
+      .replace(/\$PORT/g, String(port));
 
     const env = { ...process.env, PORT: String(port) };
-    const proc = spawn(bin, args, {
+    const proc = spawn("sh", ["-c", cmd], {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
