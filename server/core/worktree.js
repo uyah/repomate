@@ -14,6 +14,7 @@ export function createWorktreeManager(config) {
   const { repoDir, stmts: dbStmts } = config;
   const devServerConfig = config.devServer || null;
   const devServerProcs = new Map(); // taskId → ChildProcess
+  const devServerLogs = new Map(); // taskId → string[] (last N lines)
   const WORKTREES_DIR = config.worktreeBase || join(repoDir, "..", "worktrees");
   mkdirSync(WORKTREES_DIR, { recursive: true });
 
@@ -171,15 +172,27 @@ export function createWorktreeManager(config) {
       detached: true,
     });
 
+    const MAX_LOG_LINES = 200;
+    const logs = [];
+    devServerLogs.set(taskId, logs);
+    const appendLog = (line) => {
+      logs.push(line);
+      if (logs.length > MAX_LOG_LINES) logs.splice(0, logs.length - MAX_LOG_LINES);
+    };
     proc.stdout?.on("data", (d) => {
-      const line = d.toString().trim();
-      if (line) console.log(`[dev:${taskId}:${port}] ${line}`);
+      for (const line of d.toString().split("\n")) {
+        const trimmed = line.trimEnd();
+        if (trimmed) { appendLog(trimmed); console.log(`[dev:${taskId}:${port}] ${trimmed}`); }
+      }
     });
     proc.stderr?.on("data", (d) => {
-      const line = d.toString().trim();
-      if (line) console.log(`[dev:${taskId}:${port}] ${line}`);
+      for (const line of d.toString().split("\n")) {
+        const trimmed = line.trimEnd();
+        if (trimmed) { appendLog(trimmed); console.log(`[dev:${taskId}:${port}] ${trimmed}`); }
+      }
     });
     proc.on("exit", (code) => {
+      appendLog(`[exited code=${code}]`);
       console.log(`[dev:${taskId}:${port}] exited (code=${code})`);
       devServerProcs.delete(taskId);
       dbStmts.devServerDelete.run(taskId);
@@ -209,6 +222,10 @@ export function createWorktreeManager(config) {
     return dbStmts.devServerBySubdomain.get(subdomain);
   }
 
+  function getDevServerLogs(taskId) {
+    return devServerLogs.get(taskId) || [];
+  }
+
   return {
     createWorktree,
     removeWorktree,
@@ -221,6 +238,7 @@ export function createWorktreeManager(config) {
     stopDevServer,
     getDevServers,
     getDevServerBySubdomain,
+    getDevServerLogs,
     WORKTREES_DIR,
   };
 }

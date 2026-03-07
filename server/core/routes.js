@@ -11,7 +11,7 @@ import { join, extname } from "path";
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
   const { runClaude, runClaudeSync, runningPids, liveOutputs } = runner;
-  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, WORKTREES_DIR } = worktrees;
+  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
 
@@ -480,6 +480,13 @@ export function registerRoutes(app, ctx) {
     const rootId = task.root_id || task.id;
     stopDevServer(rootId);
     return c.json({ status: "stopped" });
+  });
+
+  app.get("/task/:id/dev-server/logs", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    return c.json({ lines: getDevServerLogs(rootId) });
   });
 
   app.get("/logs/sources", (c) => {

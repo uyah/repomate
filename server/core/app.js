@@ -69,16 +69,22 @@ export async function createApp(config) {
       if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
       const url = new URL(c.req.url);
       const target = `http://localhost:${server.port}${url.pathname}${url.search}`;
-      const resp = await fetch(target, {
-        method: c.req.method,
-        headers: c.req.raw.headers,
-        body: c.req.method !== "GET" && c.req.method !== "HEAD" ? c.req.raw.body : undefined,
-        redirect: "manual",
-      });
-      return new Response(resp.body, {
-        status: resp.status,
-        headers: resp.headers,
-      });
+      const hasBody = c.req.method !== "GET" && c.req.method !== "HEAD";
+      try {
+        const resp = await fetch(target, {
+          method: c.req.method,
+          headers: c.req.raw.headers,
+          body: hasBody ? c.req.raw.body : undefined,
+          redirect: "manual",
+          ...(hasBody ? { duplex: "half" } : {}),
+        });
+        return new Response(resp.body, {
+          status: resp.status,
+          headers: resp.headers,
+        });
+      } catch {
+        return c.text("Bad gateway", 502);
+      }
     });
   }
 
