@@ -39,7 +39,7 @@ export function createClaudeRunner(config) {
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
       promptSuggestions: true,
-      env: { ...process.env, ...getGhToken() },
+      env: (() => { const e = { ...process.env, ...getGhToken() }; delete e.CLAUDECODE; return e; })(),
       systemPrompt: { type: "preset", preset: "claude_code" },
       tools: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project"],
