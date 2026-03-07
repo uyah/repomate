@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import dotenv from "dotenv";
 import { serve } from "@hono/node-server";
 import { readFileSync } from "fs";

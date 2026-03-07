@@ -4,6 +4,7 @@
   "description": "Mac Mini automation: GitHub Issue → Claude Code → PR workflow",
   "type": "module",
   "bin": {
+    "mac-mini-server": "./server/index.js",
     "mac-mini-task-runner": "./bin/task-runner.sh",
     "mac-mini-worktree": "./bin/worktree.sh",
     "mac-mini-deploy": "./bin/deploy.sh",
@@ -32,5 +33,5 @@
     "start": "node server/index.js"
   },
   "license": "UNLICENSED",
-  "private": true
+  "private": false
 }

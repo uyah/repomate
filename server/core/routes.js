@@ -20,6 +20,13 @@ export function registerRoutes(app, ctx) {
     return c.json({ status: "ok", activeTasks: runningPids.size });
   });
 
+  // --- Public config (for dashboard) ---
+  app.get("/config/public", (c) => {
+    return c.json({
+      devServer: config.devServer || null,
+    });
+  });
+
   // --- File upload ---
   app.post("/upload", async (c) => {
     const contentType = c.req.header("content-type") || "";

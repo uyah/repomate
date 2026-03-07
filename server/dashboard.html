@@ -132,6 +132,17 @@
   .wt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .thread-item.closed { opacity: 0.5; }
 
+  .dev-server-bar {
+    display: flex; align-items: center; gap: 8px; margin-top: 6px;
+    padding: 6px 10px; background: #0f1f0f; border: 1px solid #1a3a1a; border-radius: 6px;
+  }
+  .dev-server-bar.stopped { background: #1a1a1a; border-color: #2a2a2a; }
+  .dev-server-url { color: #4ade80; font-size: 0.75rem; font-family: monospace; text-decoration: none; }
+  .dev-server-url:hover { text-decoration: underline; }
+  .dev-server-label { color: #888; font-size: 0.7rem; }
+  .dev-start-btn { background: #1a3a1a; color: #4ade80; border: 1px solid #2a4a2a; border-radius: 6px; padding: 3px 10px; font-size: 0.7rem; cursor: pointer; font-weight: 600; }
+  .dev-stop-btn { background: #3a1a1a; color: #f87171; border: 1px solid #5a2a2a; border-radius: 6px; padding: 3px 10px; font-size: 0.7rem; cursor: pointer; font-weight: 600; }
+
   .detail-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0; }
 
   /* Messages */
@@ -272,6 +283,8 @@
 const API = location.origin;
 const streams = new Map();
 const pendingFiles = [];
+let publicConfig = null;
+let devServersMap = {}; // rootId → { port, subdomain, ... }
 let currentPage = 1;
 let searchQuery = '';
 let allThreads = [];
@@ -564,9 +577,30 @@ function renderDetail(t) {
   }
   document.getElementById('detailActions').innerHTML = actionsHtml;
 
+  // Dev server bar (only if devServer configured and thread has worktree)
+  const rootId = t.id;
+  const devServer = devServersMap[rootId];
+  const baseDomain = publicConfig?.devServer?.baseDomain;
+  let devBarHtml = '';
+  if (baseDomain && !t.closedAt) {
+    if (devServer) {
+      const devUrl = `https://task-${rootId}.${baseDomain}`;
+      devBarHtml = `<div class="dev-server-bar">
+        <span class="dev-server-label">Dev Server:</span>
+        <a class="dev-server-url" href="${devUrl}" target="_blank">${devUrl}</a>
+        <button class="dev-stop-btn" onclick="toggleDevServer('${lastTaskId}', false)">停止</button>
+      </div>`;
+    } else {
+      devBarHtml = `<div class="dev-server-bar stopped">
+        <span class="dev-server-label">Dev Server:</span>
+        <button class="dev-start-btn" onclick="toggleDevServer('${lastTaskId}', true)">起動</button>
+      </div>`;
+    }
+  }
+
   // Messages
   const allTasks = [t, ...(t.replies || [])];
-  let html = '';
+  let html = devBarHtml;
   for (let i = 0; i < allTasks.length; i++) {
     const isLast = i === allTasks.length - 1;
     html += renderDetailMsg(allTasks[i], i > 0, isLast);
@@ -654,10 +688,22 @@ async function loadPage(isRefresh) {
     if (currentTab === 'done') params.set('closed', '1');
 
     const fetches = [fetch(API + '/tasks?' + params).then(r => r.json())];
-    if (isRefresh) fetches.push(fetch(API + '/status').then(r => r.json()));
+    if (isRefresh) {
+      fetches.push(fetch(API + '/status').then(r => r.json()));
+      fetches.push(fetch(API + '/dev-servers').then(r => r.json()).catch(() => []));
+      if (!publicConfig) fetches.push(fetch(API + '/config/public').then(r => r.json()).catch(() => ({})));
+    }
     const results = await Promise.all(fetches);
     const data = results[0];
 
+    if (isRefresh) {
+      // Dev servers
+      const devServers = results[2] || [];
+      devServersMap = {};
+      for (const ds of devServers) devServersMap[ds.task_id] = ds;
+      // Public config
+      if (results[3]) publicConfig = results[3];
+    }
     if (isRefresh && results[1]) {
       const status = results[1];
       doneCount = status.tasks.done || 0;
@@ -921,6 +967,19 @@ async function closeThreadUI(taskId, btn) {
     closeDetail();
     refresh();
   } catch (e) { alert('クローズ失敗: ' + e.message); if (btn) { btn.disabled = false; btn.textContent = 'Done'; } }
+}
+
+async function toggleDevServer(taskId, start) {
+  try {
+    if (start) {
+      const res = await fetch(API + '/task/' + taskId + '/dev-server', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'Dev server起動失敗'); return; }
+    } else {
+      await fetch(API + '/task/' + taskId + '/dev-server', { method: 'DELETE' });
+    }
+    setTimeout(refresh, 500);
+  } catch (e) { alert('Dev server操作失敗: ' + e.message); }
 }
 
 async function discardChanges(taskId) {
