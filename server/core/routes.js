@@ -333,7 +333,7 @@ export function registerRoutes(app, ctx) {
     return c.json({ error: `merge failed: ${result.error}` }, 500);
   });
 
-  // --- Create PR ---
+  // --- Create PR (via Claude Code) ---
   app.post("/task/:id/pr", async (c) => {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
@@ -350,23 +350,31 @@ export function registerRoutes(app, ctx) {
     // Collect all prompts in the thread for context
     const threadTasks = stmts.thread.all(rootId);
     const prompts = threadTasks.map(t => t.prompt).filter(Boolean);
-    const firstPrompt = (rootTask?.prompt || task.prompt || "").slice(0, 60);
-    const title = `task(${rootId}): ${firstPrompt}`;
 
-    // Build detailed body
-    let body = `## Summary\n`;
-    body += prompts.map((p, i) => `${i + 1}. ${p.slice(0, 300)}`).join('\n');
-    body += `\n\n## Changes\n`;
-    body += changes.files.map(f => '- `' + f + '`').join('\n');
+    // Create a new task for PR creation via Claude Code
+    const prTaskId = `pr-${rootId}-${Date.now()}`;
+    const branch = `task/${rootId}`;
+    const prompt = `以下のタスクの変更をPRにしてください。
 
-    const result = createPullRequest(cwd, rootId, title, body);
-    if (result.ok) {
-      // Save PR URL on root task but don't close thread — thread stays open until merged
-      stmts.setThreadPr.run(result.prUrl, result.branch, rootId);
-      stopDevServer(rootId);
-      return c.json({ status: "pr_created", prUrl: result.prUrl, branch: result.branch });
-    }
-    return c.json({ error: `PR creation failed: ${result.error}` }, 500);
+## 元のリクエスト
+${prompts.map((p, i) => `${i + 1}. ${p.slice(0, 500)}`).join('\n')}
+
+## 手順
+1. \`git diff\` で変更内容を確認
+2. 変更を全てコミット（適切なコミットメッセージで。複数コミットに分けてもOK）
+3. ブランチ名 \`${branch}\` で push
+4. \`gh pr create\` でPRを作成
+   - タイトル: 変更内容を端的に表す日本語タイトル（Conventional Commits形式）
+   - body: 変更の要約、動機、主な変更点を記述
+
+PRのURLを最後に出力してください。`;
+
+    stmts.insert.run(prTaskId, prompt, new Date().toISOString(), null, cwd, null, rootId, rootId, null, null);
+
+    // Run Claude in background — don't block the HTTP response
+    runClaude(prTaskId, prompt, 30, null, cwd);
+
+    return c.json({ status: "pr_creating", taskId: prTaskId, message: "Claude is creating the PR" });
   });
 
   // --- Discard changes ---

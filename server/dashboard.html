@@ -1253,16 +1253,15 @@ async function mergeTask(taskId) {
 
 async function createPr(taskId) {
   const btn = document.querySelector('.wt-pr');
-  const origText = btn ? btn.textContent : '';
   try {
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> PR作成中...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> Claude がPR作成中...'; }
     const res = await fetch(API + '/task/' + taskId + '/pr', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }
-    if (data.prUrl) window.open(data.prUrl, '_blank');
+    // PR creation is now async — Claude runs in background as a sub-task
     refresh();
   } catch (e) { alert('PR作成失敗: ' + e.message); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'PR作成'; } }
 }
 
 function switchTab(tab) {
