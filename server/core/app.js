@@ -112,7 +112,7 @@ export async function createApp(config) {
   });
 
   // --- Dashboard route ---
-  app.get("/", (c) => {
+  const serveDashboard = (c) => {
     try {
       const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
       const dashboardPath = join(serverDir, "dashboard.html");
@@ -121,7 +121,9 @@ export async function createApp(config) {
     } catch {
       return c.text("Dashboard not found", 404);
     }
-  });
+  };
+  app.get("/", serveDashboard);
+  app.get("/t/:id", serveDashboard);
 
   // --- Logs viewer route ---
   app.get("/logs-viewer", (c) => {

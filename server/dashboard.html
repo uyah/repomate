@@ -637,6 +637,7 @@ function renderDetail(t) {
 
 function closeDetail() {
   selectedThreadId = null;
+  history.pushState(null, '', '/');
   const pane = document.getElementById('detailPane');
   pane.classList.add('empty-state');
   pane.classList.remove('open');
@@ -647,8 +648,16 @@ function closeDetail() {
 
 function openThread(id) {
   const t = allThreads.find(t => t.id === id);
-  if (t) renderDetail(t);
+  if (t) {
+    history.pushState(null, '', '/t/' + id);
+    renderDetail(t);
+  }
 }
+
+window.addEventListener('popstate', () => {
+  const m = location.pathname.match(/^\/t\/([a-f0-9]+)$/);
+  if (m) { openThread(m[1]); } else { closeDetail(); }
+});
 
 // === Streaming ===
 function startStream(taskId) {
@@ -1018,7 +1027,10 @@ document.getElementById('detailReplyInput').addEventListener('keydown', (e) => {
 document.getElementById('searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { searchQuery = e.target.value.trim(); currentPage = 1; refresh(); } });
 
 // === Init ===
-refresh();
+refresh().then(() => {
+  const m = location.pathname.match(/^\/t\/([a-f0-9]+)$/);
+  if (m) openThread(m[1]);
+});
 setInterval(() => { if (!streams.size) refresh(); }, 5000);
 </script>
 </body>
