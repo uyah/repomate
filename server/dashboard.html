@@ -836,13 +836,16 @@ function renderDetail(t) {
   }
   document.getElementById('detailBody').innerHTML = html;
 
+  // Reply target (last task in thread)
+  const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
+
   // Thread cost & session info
   const allCosts = [t.costUsd, ...(t.replies || []).map(r => r.costUsd)].filter(c => c != null);
   const totalCost = allCosts.length > 0 ? allCosts.reduce((a, b) => a + b, 0) : null;
   const allUsage = [t.usage, ...(t.replies || []).map(r => r.usage)].filter(u => u != null);
   const totalInput = allUsage.reduce((s, u) => s + (u.input_tokens || 0), 0);
   const totalOutput = allUsage.reduce((s, u) => s + (u.output_tokens || 0), 0);
-  const lastSession = (t.replies?.length ? t.replies[t.replies.length - 1] : t).sessionId;
+  const lastSession = last.sessionId;
 
   // Context bar (estimate: ~200k context window)
   const contextUsed = totalInput + totalOutput;
@@ -870,7 +873,6 @@ function renderDetail(t) {
   document.getElementById('detailSessionInfo').innerHTML = sessionInfoHtml;
 
   // Reply input - always show unless closed
-  const last = t.replies?.length ? t.replies[t.replies.length - 1] : t;
   const replyEl = document.getElementById('detailReply');
   if (!t.closedAt) {
     replyEl.style.display = '';
