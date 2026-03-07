@@ -33,6 +33,14 @@ export function createWorktreeManager(config) {
     if (existsSync(worktreePath)) return worktreePath;
     try {
       execSync(`git worktree add --detach "${worktreePath}"`, { cwd: repoDir, stdio: "pipe" });
+      // Symlink node_modules from main repo so dev server and tools work
+      const srcModules = join(repoDir, "node_modules");
+      const dstModules = join(worktreePath, "node_modules");
+      if (existsSync(srcModules) && !existsSync(dstModules)) {
+        try {
+          execSync(`ln -s "${srcModules}" "${dstModules}"`, { stdio: "pipe" });
+        } catch {}
+      }
       console.log(`[worktree] Created ${worktreePath}`);
       return worktreePath;
     } catch (err) {
