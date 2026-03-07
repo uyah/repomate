@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import dotenv from "dotenv";
 import { serve } from "@hono/node-server";
-import { readFileSync } from "fs";
+import { readFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -56,8 +56,11 @@ config = resolveEnvVars(config);
 
 // Ensure serverDir is set
 config.serverDir = config.serverDir || __dirname;
-config.dbPath = config.dbPath || join(__dirname, "tasks.db");
-config.uploadsDir = config.uploadsDir || join(__dirname, "uploads");
+const dataDir = config.repoDir || __dirname;
+const automationDir = join(dataDir, ".automation");
+mkdirSync(automationDir, { recursive: true });
+config.dbPath = config.dbPath || join(automationDir, "tasks.db");
+config.uploadsDir = config.uploadsDir || join(automationDir, "uploads");
 config.port = config.webhookServer?.port || config.port || 8080;
 
 // --- Start ---
