@@ -47,6 +47,17 @@ export function createDatabase(dbPath, runtime) {
   `);
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack ON users(slack_user_id) WHERE slack_user_id IS NOT NULL`); } catch {}
 
+  // --- Dev servers table (worktree → port mapping) ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dev_servers (
+      task_id TEXT PRIMARY KEY,
+      port INTEGER NOT NULL UNIQUE,
+      subdomain TEXT NOT NULL,
+      pid INTEGER,
+      started_at TEXT NOT NULL
+    )
+  `);
+
   // --- Prepared statements ---
   const stmts = {
     insert: db.prepare(`INSERT INTO tasks (id, prompt, status, started_at, callback, cwd, session_id, parent_id, root_id, slack_thread_key, created_by) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -63,6 +74,13 @@ export function createDatabase(dbPath, runtime) {
     closeThread: db.prepare(`UPDATE tasks SET closed_at = ? WHERE id = ? OR root_id = ?`),
     countDone: db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL AND parent_id IS NULL`),
     countWaiting: db.prepare(`SELECT COUNT(*) as c FROM tasks t WHERE t.parent_id IS NULL AND t.closed_at IS NULL AND t.status != 'running' AND NOT EXISTS (SELECT 1 FROM tasks r WHERE r.root_id = t.id AND r.status = 'running')`),
+    // Dev servers
+    devServerInsert: db.prepare(`INSERT OR REPLACE INTO dev_servers (task_id, port, subdomain, pid, started_at) VALUES (?, ?, ?, ?, ?)`),
+    devServerDelete: db.prepare(`DELETE FROM dev_servers WHERE task_id = ?`),
+    devServerGet: db.prepare(`SELECT * FROM dev_servers WHERE task_id = ?`),
+    devServerBySubdomain: db.prepare(`SELECT * FROM dev_servers WHERE subdomain = ?`),
+    devServerAll: db.prepare(`SELECT * FROM dev_servers ORDER BY port ASC`),
+    devServerMaxPort: db.prepare(`SELECT MAX(port) as max_port FROM dev_servers`),
   };
 
   const userStmts = {

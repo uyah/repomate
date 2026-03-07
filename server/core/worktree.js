@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
@@ -8,9 +8,12 @@ import { join } from "path";
  * @param {string} config.repoDir - Main repository directory
  * @param {string} [config.worktreeBase] - Base directory for worktrees (default: repoDir/../worktrees)
  * @param {object} [config.stmts] - Prepared statements (needs closeThread stmt)
+ * @param {object} [config.devServer] - Dev server config { startPort, command, baseDomain }
  */
 export function createWorktreeManager(config) {
   const { repoDir, stmts: dbStmts } = config;
+  const devServerConfig = config.devServer || null;
+  const devServerProcs = new Map(); // taskId → ChildProcess
   const WORKTREES_DIR = config.worktreeBase || join(repoDir, "..", "worktrees");
   mkdirSync(WORKTREES_DIR, { recursive: true });
 
@@ -94,8 +97,72 @@ export function createWorktreeManager(config) {
   function closeThread(rootId) {
     const now = new Date().toISOString();
     dbStmts.closeThread.run(now, rootId, rootId);
+    stopDevServer(rootId);
     removeWorktree(rootId);
     console.log(`[thread] Closed thread ${rootId}`);
+  }
+
+  // --- Dev server management ---
+
+  function allocatePort() {
+    const startPort = devServerConfig?.startPort || 3001;
+    const row = dbStmts.devServerMaxPort.get();
+    return row?.max_port ? Math.max(row.max_port + 1, startPort) : startPort;
+  }
+
+  function startDevServer(taskId, cwd) {
+    if (!devServerConfig) return null;
+    if (devServerProcs.has(taskId)) return dbStmts.devServerGet.get(taskId);
+
+    const port = allocatePort();
+    const subdomain = `task-${taskId}`;
+    const cmd = devServerConfig.command || "npm run dev";
+    const [bin, ...args] = cmd.split(" ");
+
+    const env = { ...process.env, PORT: String(port) };
+    const proc = spawn(bin, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+
+    proc.stdout?.on("data", (d) => {
+      const line = d.toString().trim();
+      if (line) console.log(`[dev:${taskId}:${port}] ${line}`);
+    });
+    proc.stderr?.on("data", (d) => {
+      const line = d.toString().trim();
+      if (line) console.log(`[dev:${taskId}:${port}] ${line}`);
+    });
+    proc.on("exit", (code) => {
+      console.log(`[dev:${taskId}:${port}] exited (code=${code})`);
+      devServerProcs.delete(taskId);
+      dbStmts.devServerDelete.run(taskId);
+    });
+
+    devServerProcs.set(taskId, proc);
+    dbStmts.devServerInsert.run(taskId, port, subdomain, proc.pid, new Date().toISOString());
+    console.log(`[dev] Started dev server for ${taskId} on port ${port} (subdomain: ${subdomain})`);
+
+    return { taskId, port, subdomain, pid: proc.pid };
+  }
+
+  function stopDevServer(taskId) {
+    const proc = devServerProcs.get(taskId);
+    if (proc) {
+      try { process.kill(-proc.pid, "SIGTERM"); } catch {}
+      devServerProcs.delete(taskId);
+    }
+    dbStmts.devServerDelete.run(taskId);
+  }
+
+  function getDevServers() {
+    return dbStmts.devServerAll.all();
+  }
+
+  function getDevServerBySubdomain(subdomain) {
+    return dbStmts.devServerBySubdomain.get(subdomain);
   }
 
   return {
@@ -106,6 +173,10 @@ export function createWorktreeManager(config) {
     createPullRequest,
     closeThread,
     getGhToken,
+    startDevServer,
+    stopDevServer,
+    getDevServers,
+    getDevServerBySubdomain,
     WORKTREES_DIR,
   };
 }

@@ -45,6 +45,7 @@ export async function createApp(config) {
     repoDir,
     worktreeBase: config.worktreeBase,
     stmts,
+    devServer: config.devServer || null,
   });
 
   // --- Initialize Claude runner ---
@@ -56,6 +57,30 @@ export async function createApp(config) {
     repoDir,
     maxTurns,
   });
+
+  // --- Reverse proxy for dev server subdomains ---
+  const baseDomain = config.devServer?.baseDomain;
+  if (baseDomain) {
+    app.use("*", async (c, next) => {
+      const host = c.req.header("host") || "";
+      if (!host.endsWith(`.${baseDomain}`)) return next();
+      const subdomain = host.replace(`.${baseDomain}`, "");
+      const server = worktrees.getDevServerBySubdomain(subdomain);
+      if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
+      const url = new URL(c.req.url);
+      const target = `http://localhost:${server.port}${url.pathname}${url.search}`;
+      const resp = await fetch(target, {
+        method: c.req.method,
+        headers: c.req.raw.headers,
+        body: c.req.method !== "GET" && c.req.method !== "HEAD" ? c.req.raw.body : undefined,
+        redirect: "manual",
+      });
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: resp.headers,
+      });
+    });
+  }
 
   // --- User identification helper (bound to userStmts) ---
   const cfUserHelper = (c) => getCfUser(c, userStmts);

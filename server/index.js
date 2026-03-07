@@ -40,11 +40,24 @@ if (configPath) {
   };
 }
 
+// Resolve $HOME in string values
+function resolveEnvVars(obj) {
+  if (typeof obj === "string") return obj.replace(/\$HOME/g, process.env.HOME || "/tmp");
+  if (Array.isArray(obj)) return obj.map(resolveEnvVars);
+  if (obj && typeof obj === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = resolveEnvVars(v);
+    return out;
+  }
+  return obj;
+}
+config = resolveEnvVars(config);
+
 // Ensure serverDir is set
 config.serverDir = config.serverDir || __dirname;
 config.dbPath = config.dbPath || join(__dirname, "tasks.db");
 config.uploadsDir = config.uploadsDir || join(__dirname, "uploads");
-config.port = config.port || 8080;
+config.port = config.webhookServer?.port || config.port || 8080;
 
 // --- Start ---
 (async () => {

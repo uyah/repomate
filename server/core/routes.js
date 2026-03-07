@@ -11,7 +11,7 @@ import { join, extname } from "path";
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
   const { runClaude, runClaudeSync, runningPids, liveOutputs } = runner;
-  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, WORKTREES_DIR } = worktrees;
+  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
 
@@ -447,6 +447,31 @@ export function registerRoutes(app, ctx) {
     } catch (err) {
       return c.json({ error: err.message }, 500);
     }
+  });
+
+  // --- Dev servers ---
+  app.get("/dev-servers", (c) => {
+    return c.json(getDevServers());
+  });
+
+  app.post("/task/:id/dev-server", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    const rootTask = task.root_id ? stmts.get.get(task.root_id) : task;
+    const cwd = task.cwd || rootTask?.cwd;
+    if (!cwd) return c.json({ error: "no worktree for this task" }, 400);
+    const result = startDevServer(rootId, cwd);
+    if (!result) return c.json({ error: "dev server not configured" }, 400);
+    return c.json(result);
+  });
+
+  app.delete("/task/:id/dev-server", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    stopDevServer(rootId);
+    return c.json({ status: "stopped" });
   });
 
   app.get("/logs/sources", (c) => {
