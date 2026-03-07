@@ -228,7 +228,54 @@
   .empty { color: #444; text-align: center; padding: 40px; font-size: 0.9rem; }
   #loadMore { text-align: center; padding: 16px; }
   .load-more-text { color: #555; font-size: 0.8rem; font-style: italic; }
+  /* Markdown rendered content */
+  .md-content { font-size: 0.88rem; color: #ccc; word-break: break-word; line-height: 1.6; }
+  .md-content p { margin: 0.4em 0; }
+  .md-content p:first-child { margin-top: 0; }
+  .md-content p:last-child { margin-bottom: 0; }
+  .md-content h1, .md-content h2, .md-content h3, .md-content h4 { color: #fff; margin: 0.8em 0 0.3em; font-size: 1em; }
+  .md-content h1 { font-size: 1.2em; border-bottom: 1px solid #2a2a2a; padding-bottom: 0.2em; }
+  .md-content h2 { font-size: 1.1em; }
+  .md-content h3 { font-size: 1em; }
+  .md-content code {
+    background: #1a1a2a; color: #e0a0ff; padding: 1px 5px; border-radius: 3px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em;
+  }
+  .md-content pre { background: #111118; border: 1px solid #1a1a2a; border-radius: 6px; padding: 10px; margin: 6px 0; overflow-x: auto; }
+  .md-content pre code { background: none; color: #ccc; padding: 0; font-size: 0.82em; display: block; white-space: pre; }
+  .md-content ul, .md-content ol { padding-left: 1.4em; margin: 0.3em 0; }
+  .md-content li { margin: 0.15em 0; }
+  .md-content blockquote { border-left: 3px solid #333; padding-left: 10px; color: #999; margin: 0.4em 0; }
+  .md-content table { border-collapse: collapse; font-size: 0.82em; margin: 0.4em 0; }
+  .md-content th, .md-content td { border: 1px solid #2a2a2a; padding: 4px 8px; }
+  .md-content th { background: #161616; color: #aaa; }
+  .md-content a { color: #60a5fa; }
+  .md-content hr { border: none; border-top: 1px solid #2a2a2a; margin: 0.6em 0; }
+  .md-content strong { color: #fff; }
+  .md-content img { max-width: 100%; border-radius: 6px; margin: 6px 0; }
+
+  /* Thinking blocks */
+  .evt-thinking { margin: 4px 0; padding: 6px 10px; background: #0f0f1a; border-left: 2px solid #4a3a6a; border-radius: 0 4px 4px 0; }
+  .evt-thinking-label { color: #8b6fc0; font-size: 0.7rem; font-weight: 600; margin-bottom: 2px; }
+  .evt-thinking-text { color: #777; font-size: 0.8rem; font-style: italic; white-space: pre-wrap; }
+  .evt-thinking-toggle { cursor: pointer; }
+
+  /* System events */
+  .evt-system { margin: 4px 0; padding: 4px 8px; font-size: 0.72rem; color: #555; text-align: center; font-style: italic; }
+  .evt-system .compact-badge { background: #1a1a2a; color: #60a5fa; padding: 1px 6px; border-radius: 8px; }
+
+  /* Edit diff preview */
+  .evt-diff { font-family: monospace; font-size: 0.75rem; margin: 2px 0; }
+  .evt-diff-old { color: #f87171; background: #1a0a0a; padding: 1px 4px; }
+  .evt-diff-new { color: #4ade80; background: #0a1a0a; padding: 1px 4px; }
+
+  /* Tool result error */
+  .evt-tool-error { color: #f87171; font-size: 0.75rem; }
+
+  /* Cost display */
+  .cost-badge { color: #666; font-size: 0.65rem; font-family: monospace; margin-left: 4px; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 </head>
 <body>
 <div class="drop-overlay" id="dropOverlay">ファイルをドロップ</div>
@@ -337,6 +384,21 @@ function renderFileInText(text) {
   return html;
 }
 
+function renderMarkdown(text) {
+  if (!text) return '';
+  if (typeof marked === 'undefined') return `<span class="msg-text">${renderFileInText(text)}</span>`;
+  try {
+    // Handle inline images from /files/ path
+    let processed = text.replace(/\/files\/([a-zA-Z0-9._-]+\.(png|jpg|jpeg|gif|webp|svg))/gi, (match) => {
+      return `![](${match})`;
+    });
+    const html = marked.parse(processed, { breaks: true, gfm: true });
+    return `<div class="md-content">${html}</div>`;
+  } catch {
+    return `<span class="msg-text">${renderFileInText(text)}</span>`;
+  }
+}
+
 function formatUser(createdBy) {
   if (!createdBy) return '(anonymous)';
   if (createdBy.startsWith('slack:')) {
@@ -378,13 +440,17 @@ function renderEvents(events) {
     const e = events[i];
     if (e.type === 'text') {
       items.push({ type: 'text', text: e.text });
+    } else if (e.type === 'thinking') {
+      items.push({ type: 'thinking', text: e.text });
+    } else if (e.type === 'system') {
+      items.push({ type: 'system', subtype: e.subtype, model: e.model, pre_tokens: e.pre_tokens });
     } else if (e.type === 'tool_use') {
       const next = events[i + 1];
-      const result = (next && next.type === 'tool_result') ? next.content : null;
+      const result = (next && next.type === 'tool_result') ? next : null;
       if (result !== null) i++;
-      items.push({ type: 'tool', name: e.name, input: e.input, result });
+      items.push({ type: 'tool', name: e.name, input: e.input, tool_use_id: e.tool_use_id, result: result?.content, is_error: result?.is_error });
     } else if (e.type === 'tool_result') {
-      items.push({ type: 'tool', name: '(result)', input: null, result: e.content });
+      items.push({ type: 'tool', name: '(result)', input: null, result: e.content, is_error: e.is_error });
     }
   }
   const grouped = [];
@@ -401,7 +467,21 @@ function renderEvents(events) {
   let html = '';
   for (const g of grouped) {
     if (g.type === 'text') {
-      html += `<div class="evt-text"><span class="msg-text">${renderFileInText(g.text)}</span></div>`;
+      html += `<div class="evt-text">${renderMarkdown(g.text)}</div>`;
+    } else if (g.type === 'thinking') {
+      const tid = 'think-' + (toolToggleId++);
+      const preview = (g.text || '').slice(0, 60).replace(/\n/g, ' ');
+      html += `<div class="evt-thinking evt-thinking-toggle" onclick="toggleTool('${tid}')">
+        <div class="evt-thinking-label"><span class="evt-toggle" id="${tid}-arrow">▶</span> thinking</div>
+        <div class="evt-group-body" id="${tid}"><div class="evt-thinking-text">${esc(g.text || '')}</div></div>
+        <div class="evt-thinking-text" style="max-height:1.2em;overflow:hidden">${esc(preview)}</div>
+      </div>`;
+    } else if (g.type === 'system') {
+      if (g.subtype === 'init') {
+        html += `<div class="evt-system">model: ${esc(g.model || '?')}</div>`;
+      } else if (g.subtype === 'compact_boundary') {
+        html += `<div class="evt-system"><span class="compact-badge">compact</span> ${g.pre_tokens ? g.pre_tokens.toLocaleString() + ' tokens' : ''}</div>`;
+      }
     } else if (g.type === 'tool_group' && g.calls.length === 1) {
       html += renderSingleTool(g.calls[0]);
     } else if (g.type === 'tool_group') {
@@ -421,20 +501,43 @@ function renderEvents(events) {
   return html;
 }
 
+function renderToolInput(name, input) {
+  if (!input || typeof input !== 'object') return '';
+  if (name === 'Edit') {
+    let html = '';
+    if (input.file_path) html += `<div class="evt-detail-label">${esc(input.file_path)}</div>`;
+    if (input.old_string) html += `<div class="evt-diff"><div class="evt-diff-old">- ${esc(input.old_string.slice(0, 500))}</div></div>`;
+    if (input.new_string) html += `<div class="evt-diff"><div class="evt-diff-new">+ ${esc(input.new_string.slice(0, 500))}</div></div>`;
+    return html;
+  }
+  if (name === 'Bash') {
+    return `<div class="evt-detail-content"><code>${esc((input.command || '').slice(0, 1000))}</code></div>`;
+  }
+  if (name === 'Write') {
+    let html = '';
+    if (input.file_path) html += `<div class="evt-detail-label">${esc(input.file_path)}</div>`;
+    if (input.content) html += `<div class="evt-detail-content">${esc(input.content.slice(0, 500))}${input.content.length > 500 ? '...' : ''}</div>`;
+    return html;
+  }
+  const str = typeof input === 'string' ? input : JSON.stringify(input, null, 1);
+  return `<div class="evt-detail-content">${esc(str.slice(0, 2000))}</div>`;
+}
+
 function renderSingleTool(item) {
   const tid = 'tg-' + (toolToggleId++);
   const summary = esc(toolSummary(item.name, item.input));
-  const inputStr = item.input ? (typeof item.input === 'string' ? item.input : JSON.stringify(item.input, null, 1)) : '';
   const resultStr = item.result || '';
+  const errorClass = item.is_error ? ' evt-tool-error' : '';
   return `<div class="evt-group">
     <div class="evt-group-header" onclick="toggleTool('${tid}')">
       <span class="evt-toggle" id="${tid}-arrow">▶</span>
       <span class="evt-tool-name">${esc(item.name)}</span>
       <span class="evt-tool-summary">${summary}</span>
+      ${item.is_error ? '<span class="evt-tool-error">error</span>' : ''}
     </div>
     <div class="evt-group-body" id="${tid}">
-      ${inputStr ? `<div class="evt-detail-label">input</div><div class="evt-detail-content">${esc(inputStr.slice(0, 2000))}</div>` : ''}
-      ${resultStr ? `<div class="evt-detail-label">output</div><div class="evt-detail-result">${esc(resultStr.slice(0, 2000))}</div>` : ''}
+      ${item.input ? renderToolInput(item.name, item.input) : ''}
+      ${resultStr ? `<div class="evt-detail-label">output</div><div class="evt-detail-result${errorClass}">${esc(resultStr.slice(0, 2000))}</div>` : ''}
     </div>
   </div>`;
 }
@@ -546,7 +649,7 @@ function renderDetailMsg(t, isReply, isLast) {
   } else if (t.result) {
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
-      <div class="msg-text">${renderFileInText(String(t.result).slice(0, 4000))}</div>
+      ${renderMarkdown(String(t.result).slice(0, 4000))}
     </div>`;
   } else if (t.error) {
     html += `<div class="msg msg-assistant msg-reply">

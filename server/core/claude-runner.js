@@ -1,7 +1,7 @@
-import { spawn } from "child_process";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
 /**
- * Create a Claude runner with process management.
+ * Create a Claude runner using the Agent SDK.
  * @param {object} config
  * @param {object} config.stmts - DB prepared statements
  * @param {object} config.db - SQLite database instance
@@ -12,99 +12,173 @@ import { spawn } from "child_process";
  */
 export function createClaudeRunner(config) {
   const { stmts, db, taskToJson, getGhToken, repoDir, maxTurns } = config;
-  const runningPids = new Map();
+  /** @type {Map<string, AbortController>} */
+  const runningTasks = new Map();
+  /** @type {Map<string, {events: Array, lastText: string}>} */
   const liveOutputs = new Map();
 
+  // Backward-compat: expose a pid-like Map for routes that check runningPids.size
+  const runningPids = new Map();
+
   function runClaude(taskId, prompt, turns, sessionId, cwd) {
-    const args = ["-p", prompt, "--max-turns", String(turns), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose"];
-    if (sessionId) args.push("--resume", sessionId);
+    const abortController = new AbortController();
+    runningTasks.set(taskId, abortController);
+    // Store a sentinel so runningPids.size reflects active tasks
+    runningPids.set(taskId, process.pid);
 
-    const proc = spawn("claude", args, {
-      cwd: cwd || repoDir,
-      env: { ...process.env, ...getGhToken() },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    runningPids.set(taskId, proc.pid);
     const existingTask = stmts.get.get(taskId);
     const prevEvents = existingTask?.events_json ? JSON.parse(existingTask.events_json) : [];
     const liveData = { events: [...prevEvents], lastText: "" };
     liveOutputs.set(taskId, liveData);
-    let fullStdout = "";
-    let stderr = "";
-    let lastResultText = "";
-    let lastErrorText = "";
-    let capturedSessionId = sessionId;
-    let resultSubtype = null;
 
-    proc.on("error", (err) => {
-      console.error(`[${taskId}] spawn error: ${err.message}`);
-      runningPids.delete(taskId);
-      liveOutputs.delete(taskId);
-      stmts.update.run("failed", new Date().toISOString(), null, `spawn error: ${err.message}`, capturedSessionId, null, taskId);
-    });
+    const sdkOptions = {
+      abortController,
+      cwd: cwd || repoDir,
+      maxTurns: turns,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      includePartialMessages: true,
+      env: { ...process.env, ...getGhToken() },
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      tools: { type: "preset", preset: "claude_code" },
+      settingSources: ["user", "project"],
+    };
+    if (sessionId) sdkOptions.resume = sessionId;
 
-    proc.stdout.on("data", (d) => {
-      const chunk = d.toString();
-      fullStdout += chunk;
+    // Run async
+    (async () => {
+      let capturedSessionId = sessionId;
+      let lastResultText = "";
+      let lastErrorText = "";
+      let resultSubtype = null;
+      let totalCostUsd = null;
 
-      for (const line of chunk.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
+      try {
+        const conversation = query({ prompt, options: sdkOptions });
 
-          if (evt.type === "assistant" && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === "text") {
-                lastResultText = block.text;
-                liveData.events.push({ type: "text", text: block.text });
-              } else if (block.type === "tool_use") {
-                liveData.events.push({ type: "tool_use", name: block.name, input: block.input });
+        for await (const msg of conversation) {
+          if (abortController.signal.aborted) break;
+
+          if (msg.session_id) capturedSessionId = msg.session_id;
+
+          switch (msg.type) {
+            case "assistant": {
+              if (!msg.message?.content) break;
+              for (const block of msg.message.content) {
+                if (block.type === "text") {
+                  lastResultText = block.text;
+                  liveData.events.push({ type: "text", text: block.text });
+                } else if (block.type === "tool_use") {
+                  liveData.events.push({
+                    type: "tool_use",
+                    name: block.name,
+                    input: block.input,
+                    tool_use_id: block.id,
+                  });
+                } else if (block.type === "thinking") {
+                  liveData.events.push({ type: "thinking", text: block.thinking });
+                }
               }
+              liveData.lastText = lastResultText;
+              break;
             }
-          } else if (evt.type === "user" && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === "tool_result") {
-                const content = Array.isArray(block.content) ? block.content.map(c => c.text || "").join("") : String(block.content || "");
-                liveData.events.push({ type: "tool_result", tool_use_id: block.tool_use_id, content: content.slice(0, 2000) });
+
+            case "user": {
+              if (!msg.message?.content) break;
+              const content = msg.message.content;
+              const blocks = Array.isArray(content) ? content : [];
+              for (const block of blocks) {
+                if (block.type === "tool_result") {
+                  const text = Array.isArray(block.content)
+                    ? block.content.map(c => c.text || "").join("")
+                    : String(block.content || "");
+                  liveData.events.push({
+                    type: "tool_result",
+                    tool_use_id: block.tool_use_id,
+                    content: text.slice(0, 2000),
+                    is_error: block.is_error || false,
+                  });
+                }
               }
+              break;
             }
-          } else if (evt.type === "result") {
-            if (evt.session_id) capturedSessionId = evt.session_id;
-            if (evt.subtype) resultSubtype = evt.subtype;
-            if (evt.result) lastResultText = evt.result;
-            if (evt.is_error) lastErrorText = evt.result || (evt.errors && evt.errors.join("; ")) || "Unknown error";
+
+            case "result": {
+              if (msg.session_id) capturedSessionId = msg.session_id;
+              if (msg.subtype) resultSubtype = msg.subtype;
+              if (msg.result) lastResultText = msg.result;
+              if (msg.total_cost_usd != null) totalCostUsd = msg.total_cost_usd;
+              if (msg.is_error) {
+                lastErrorText = msg.result || (msg.errors && msg.errors.join("; ")) || "Unknown error";
+              }
+              break;
+            }
+
+            case "system": {
+              if (msg.subtype === "init") {
+                liveData.events.push({
+                  type: "system",
+                  subtype: "init",
+                  model: msg.model,
+                  tools: msg.tools,
+                });
+              } else if (msg.subtype === "compact_boundary") {
+                liveData.events.push({
+                  type: "system",
+                  subtype: "compact_boundary",
+                  pre_tokens: msg.compact_metadata?.pre_tokens,
+                });
+              }
+              break;
+            }
+
+            case "stream_event": {
+              // Partial streaming — emit delta text for live display
+              const evt = msg.event;
+              if (evt?.type === "content_block_delta" && evt.delta?.type === "text_delta") {
+                liveData.lastText = (liveData.lastText || "") + evt.delta.text;
+              }
+              break;
+            }
           }
-        } catch {}
+        }
+      } catch (err) {
+        if (abortController.signal.aborted) {
+          // Cancelled by user — not an error
+          console.log(`[${taskId}] cancelled`);
+        } else if (sessionId && err.message && err.message.includes("No conversation found")) {
+          // Auto-retry without --resume if session not found
+          console.log(`[${taskId}] Session not found, retrying without --resume`);
+          runningTasks.delete(taskId);
+          runningPids.delete(taskId);
+          liveOutputs.delete(taskId);
+          stmts.update.run("failed", new Date().toISOString(), null, err.message, null, null, taskId);
+          runClaude(taskId, prompt, turns, null, cwd);
+          return;
+        } else {
+          lastErrorText = err.message || "Unknown error";
+          console.error(`[${taskId}] SDK error: ${lastErrorText}`);
+        }
       }
-      liveData.lastText = lastResultText;
-    });
-    proc.stderr.on("data", (d) => { stderr += d; });
 
-    proc.on("close", async (code) => {
+      // Cleanup
+      runningTasks.delete(taskId);
       runningPids.delete(taskId);
       liveOutputs.delete(taskId);
       const completedAt = new Date().toISOString();
-
-      // Auto-retry without --resume if session not found
-      if (sessionId && lastErrorText && lastErrorText.includes("No conversation found")) {
-        console.log(`[${taskId}] Session not found, retrying without --resume`);
-        stmts.update.run("failed", completedAt, null, lastErrorText, null, null, taskId);
-        runClaude(taskId, prompt, turns, null, cwd);
-        return;
-      }
-
       const eventsJson = liveData.events.length > 0 ? JSON.stringify(liveData.events) : null;
 
-      if (resultSubtype === "error_max_turns") {
-        const result = lastResultText || fullStdout;
-        stmts.update.run("max_turns", completedAt, result, "max turns reached", capturedSessionId, eventsJson, taskId);
-      } else if (code === 0 && !lastErrorText) {
-        const result = lastResultText || fullStdout;
-        stmts.update.run("completed", completedAt, result, null, capturedSessionId, eventsJson, taskId);
+      if (abortController.signal.aborted) {
+        stmts.update.run("cancelled", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+      } else if (resultSubtype === "error_max_turns") {
+        stmts.update.run("max_turns", completedAt, lastResultText || null, "max turns reached", capturedSessionId, eventsJson, taskId);
+      } else if (!lastErrorText) {
+        const costInfo = totalCostUsd != null ? ` ($${totalCostUsd.toFixed(4)})` : "";
+        stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+        console.log(`[${taskId}] completed${costInfo} - ${prompt.slice(0, 80)}`);
       } else {
-        const error = lastErrorText || stderr || lastResultText || "(Claude exited with no output)";
-        stmts.update.run("failed", completedAt, null, error, capturedSessionId, eventsJson, taskId);
+        stmts.update.run("failed", completedAt, null, lastErrorText, capturedSessionId, eventsJson, taskId);
+        console.log(`[${taskId}] failed - ${lastErrorText.slice(0, 100)}`);
       }
 
       // Callback
@@ -120,12 +194,7 @@ export function createClaudeRunner(config) {
           console.error(`Callback failed for ${taskId}: ${e.message}`);
         }
       }
-
-      const finalStatus = resultSubtype === "error_max_turns" ? "max_turns" : (code === 0 ? "completed" : "failed");
-      console.log(`[${taskId}] ${finalStatus} (exit ${code}) - ${prompt.slice(0, 80)}`);
-    });
-
-    return proc;
+    })();
   }
 
   function runClaudeSync(taskId, prompt, turns, sessionId, cwd) {
@@ -139,6 +208,15 @@ export function createClaudeRunner(config) {
         }
       }, 1000);
     });
+  }
+
+  function cancelTask(taskId) {
+    const controller = runningTasks.get(taskId);
+    if (controller) {
+      controller.abort();
+      return true;
+    }
+    return false;
   }
 
   function resumeStaleTasks() {
@@ -161,23 +239,22 @@ export function createClaudeRunner(config) {
   function gracefulShutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[shutdown] ${signal} received, saving running tasks...`);
+    console.log(`[shutdown] ${signal} received, aborting ${runningTasks.size} running task(s)...`);
 
-    const now = new Date().toISOString();
-    for (const [taskId, pid] of runningPids.entries()) {
+    for (const [taskId, controller] of runningTasks.entries()) {
       const liveData = liveOutputs.get(taskId);
       const eventsJson = liveData?.events?.length > 0 ? JSON.stringify(liveData.events) : null;
       const task = stmts.get.get(taskId);
       if (task) {
         db.prepare(`UPDATE tasks SET events_json = ? WHERE id = ?`).run(eventsJson, taskId);
       }
-      try { process.kill(pid, "SIGTERM"); } catch {}
-      console.log(`[shutdown] Killed claude process ${pid} for task ${taskId}`);
+      controller.abort();
+      console.log(`[shutdown] Aborted task ${taskId}`);
     }
 
-    console.log(`[shutdown] ${runningPids.size} task(s) will auto-resume on next startup`);
+    console.log(`[shutdown] ${runningTasks.size} task(s) will auto-resume on next startup`);
     setTimeout(() => process.exit(0), 1000);
   }
 
-  return { runClaude, runClaudeSync, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
+  return { runClaude, runClaudeSync, cancelTask, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
 }

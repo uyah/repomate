@@ -10,7 +10,7 @@ import { join, extname } from "path";
  */
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
-  const { runClaude, runClaudeSync, runningPids, liveOutputs } = runner;
+  const { runClaude, runClaudeSync, cancelTask, runningPids, liveOutputs } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
@@ -271,13 +271,7 @@ export function registerRoutes(app, ctx) {
   app.delete("/task/:id", (c) => {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
-    const pid = runningPids.get(task.id);
-    if (pid) {
-      try { process.kill(pid, "SIGTERM"); } catch {}
-      stmts.update.run("cancelled", new Date().toISOString(), null, null, task.session_id, null, task.id);
-      runningPids.delete(task.id);
-      liveOutputs.delete(task.id);
-    }
+    cancelTask(task.id);
     return c.json({ status: "cancelled" });
   });
 
