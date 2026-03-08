@@ -226,7 +226,7 @@ export function createClaudeRunner(config) {
         const env = { ...process.env, ...getGhToken(), PATH: `/opt/homebrew/bin:${process.env.PATH}` };
         delete env.CLAUDECODE;
 
-        const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"], cwd: cwd || repoDir });
         const pid = child.pid;
         runningPids.set(taskId, pid);
 
