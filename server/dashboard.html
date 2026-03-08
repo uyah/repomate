@@ -990,6 +990,9 @@ function renderDetail(t) {
   if (!t.closedAt) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
+    // Inherit runner from thread (last task with a runner, or root)
+    const threadRunner = last.runner || t.runner || 'claude';
+    replyEl.dataset.runner = threadRunner;
     if (runningId) {
       // Running: show cancel button, disable input
       sendBtn.textContent = 'キャンセル';
@@ -1384,10 +1387,11 @@ async function sendDetailReply() {
   if (!prompt && files.length === 0) return;
   replyLock.active = true;
   try {
-    const runner = document.getElementById('runnerSelect').value;
+    // Use thread's runner (inherited from dataset), not the list selector
+    const replyRunner = document.getElementById('detailReply').dataset.runner || 'claude';
     const model = document.getElementById('modelSelect').value;
-    const reasoning = runner === 'codex' ? document.getElementById('reasoningSelect').value : '';
-    const body = { prompt: prompt || '添付ファイルを確認してください', runner };
+    const reasoning = replyRunner === 'codex' ? document.getElementById('reasoningSelect').value : '';
+    const body = { prompt: prompt || '添付ファイルを確認してください', runner: replyRunner };
     if (model) body.model = model;
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
