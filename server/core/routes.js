@@ -285,8 +285,17 @@ export function registerRoutes(app, ctx) {
 
     const id = randomUUID().slice(0, 8);
     // Look up session and cwd from the whole thread, not just the last task
-    const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
+    let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    // Verify session file exists on disk (may have been deleted by rollback)
+    if (sessionId && cwd) {
+      const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
+      if (!existsSync(sessionFile)) {
+        console.log(`[reply] Session file not found for ${sessionId}, starting fresh`);
+        sessionId = null;
+      }
+    }
     const user = getCfUser(c);
     insertTask(id, displayPrompt, { cwd, sessionId, parentId: original.id, rootId, user, runner: runnerType });
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning });
@@ -371,8 +380,17 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
+    let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    // Verify session file exists on disk (may have been deleted by rollback)
+    if (sessionId && cwd) {
+      const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
+      if (!existsSync(sessionFile)) {
+        console.log(`[retry] Session file not found for ${sessionId}, starting fresh`);
+        sessionId = null;
+      }
+    }
     const taskRunner = resolveThreadRunner(original, rootId);
     if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
 
@@ -506,8 +524,6 @@ export function registerRoutes(app, ctx) {
 
     // Delete all replies that came after this task
     const result = stmts.deleteAfter.run(rootId, task.id, task.id);
-    // Clear session so next reply starts fresh (avoids stale images/context in session history)
-    stmts.clearThreadSession.run(rootId, rootId);
     // Delete Claude session files from disk (prevents auto-resume of old conversation with stale images)
     const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd;
     if (cwd) {
