@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { readFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 import { createApp } from "./core/app.js";
 
@@ -15,6 +16,11 @@ dotenv.config({ path: join(__dirname, "..", ".env") });
 // --- Global error handlers ---
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] uncaughtException:", err.message, err.stack);
+  // EADDRINUSE is fatal — exit so launchd can retry after throttle interval
+  if (err.code === "EADDRINUSE") {
+    console.error("[FATAL] Port in use, exiting in 2s...");
+    setTimeout(() => process.exit(1), 2000);
+  }
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[FATAL] unhandledRejection:", reason);
@@ -51,8 +57,25 @@ config.dbPath = config.dbPath || join(automationDir, "tasks.db");
 config.uploadsDir = config.uploadsDir || join(automationDir, "uploads");
 config.port = config.webhookServer?.port || config.port || 8080;
 
+// --- Kill any process holding our port (prevents EADDRINUSE crash loop) ---
+function killPortUser(port) {
+  try {
+    const output = execSync(`lsof -ti :${port}`, { encoding: "utf-8", timeout: 5000 }).trim();
+    if (output) {
+      const myPid = String(process.pid);
+      for (const pid of output.split("\n")) {
+        if (pid.trim() === myPid) continue; // don't kill ourselves
+        try { process.kill(Number(pid), "SIGKILL"); } catch {}
+      }
+      console.log(`[startup] Killed stale process(es) on port ${port}: ${output.replace(/\n/g, ", ")}`);
+    }
+  } catch {} // lsof returns exit code 1 when no matches — that's fine
+}
+
 // --- Start ---
 (async () => {
+  killPortUser(config.port);
+
   const { app, cleanup } = await createApp(config);
 
   process.on("SIGTERM", () => cleanup("SIGTERM"));

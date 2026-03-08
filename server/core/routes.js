@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
 import { join, extname } from "path";
 
@@ -51,22 +51,36 @@ export function registerRoutes(app, ctx) {
       }
     } catch (e) { console.error("[models] codex fetch failed:", e.message); }
 
-    // Claude: execFileSync with generous timeout (claude models is an LLM call)
+    // Claude: spawn async (claude models is an LLM call, can take 60s+)
+    // Using spawn to avoid blocking the event loop
     try {
       const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
       delete env.CLAUDECODE;
-      const stdout = execSync("claude models", { encoding: "utf-8", timeout: 60000, env });
-      const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
-      if (matches && matches.length > 0) {
-        cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
-      }
+      const child = spawn("claude", ["models"], { env, stdio: ["ignore", "pipe", "pipe"], timeout: 90000 });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => { stdout += d.toString(); });
+      child.stderr.on("data", (d) => { stderr += d.toString(); });
+      child.on("close", (code) => {
+        if (code === 0 && stdout) {
+          const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
+          if (matches && matches.length > 0) {
+            cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
+          }
+        } else if (code !== 0) {
+          console.error(`[models] claude fetch failed (code=${code}): ${stderr.slice(0, 200)}`);
+        }
+        console.log(`[models] Claude: ${cachedModels.claude.join(", ") || "(none)"}`);
+      });
+      child.on("error", (e) => {
+        console.error("[models] claude spawn failed:", e.message);
+      });
     } catch (e) { console.error("[models] claude fetch failed:", e.message); }
 
-    console.log(`[models] Claude: ${cachedModels.claude.join(", ") || "(none)"}`);
     console.log(`[models] Codex: ${cachedModels.codex.map(m => m.slug).join(", ") || "(none)"}`);
   }
 
-  // Load in background thread to not block startup
+  // Load in background — non-blocking
   setTimeout(loadModels, 100);
   app.get("/config/models", (c) => c.json(cachedModels));
 

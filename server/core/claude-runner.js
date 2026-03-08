@@ -1,5 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
@@ -404,14 +404,36 @@ export function createClaudeRunner(config) {
     return false;
   }
 
+  /**
+   * Check if a process with the given name pattern is still running in the given cwd.
+   * Used to detect orphaned Codex/Claude processes that survived a server crash.
+   */
+  function isProcessAliveInCwd(processName, cwd) {
+    try {
+      // Find processes matching the name that have this cwd
+      const output = execSync(
+        `pgrep -f "${processName}.*${cwd}" 2>/dev/null || true`,
+        { encoding: "utf-8", timeout: 5000 }
+      ).trim();
+      return output.length > 0;
+    } catch { return false; }
+  }
+
   function resumeStaleTasks() {
     const staleTasks = db.prepare(`SELECT * FROM tasks WHERE status IN ('running', 'max_turns')`).all();
     if (staleTasks.length === 0) return;
     console.log(`[startup] Found ${staleTasks.length} interrupted task(s) from previous run`);
     for (const task of staleTasks) {
+      const taskRunner = task.runner || "claude";
+
+      // Check if the process is still alive (Codex/Claude processes can survive server crashes)
+      if (task.cwd && isProcessAliveInCwd(taskRunner === "codex" ? "codex" : "claude", task.cwd)) {
+        console.log(`[startup] Task ${task.id} (${taskRunner}) still has a live process — marking interrupted, not re-launching`);
+        stmts.update.run("interrupted", new Date().toISOString(), null, "server restarted (process still alive)", task.session_id, null, task.id);
+        continue;
+      }
+
       if (task.session_id) {
-        // Use stored runner, fallback to claude only for legacy tasks without runner column
-        const taskRunner = task.runner || "claude";
         console.log(`[startup] Resuming task ${task.id} (session: ${task.session_id}, runner: ${taskRunner})`);
         const prompt = "続けてください (auto-resumed after server restart)";
         runTask(task.id, prompt, maxTurns, task.session_id, task.cwd || repoDir, taskRunner);
