@@ -38,6 +38,7 @@ export function createDatabase(dbPath, runtime) {
   try { db.exec(`ALTER TABLE tasks ADD COLUMN branch TEXT`); } catch {}
   try { db.exec(`ALTER TABLE tasks ADD COLUMN cost_usd REAL`); } catch {}
   try { db.exec(`ALTER TABLE tasks ADD COLUMN usage_json TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE tasks ADD COLUMN runner TEXT`); } catch {}
 
   // --- Users table ---
   db.exec(`
@@ -67,6 +68,7 @@ export function createDatabase(dbPath, runtime) {
     insert: db.prepare(`INSERT INTO tasks (id, prompt, status, started_at, callback, cwd, session_id, parent_id, root_id, slack_thread_key, created_by) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET status = ?, completed_at = ?, result = ?, error = ?, session_id = ?, events_json = ? WHERE id = ?`),
     updateCost: db.prepare(`UPDATE tasks SET cost_usd = ?, usage_json = ? WHERE id = ?`),
+    updateRunner: db.prepare(`UPDATE tasks SET runner = ? WHERE id = ?`),
     get: db.prepare(`SELECT * FROM tasks WHERE id = ?`),
     list: db.prepare(`SELECT * FROM tasks WHERE parent_id IS NULL ORDER BY started_at DESC LIMIT ?`),
     thread: db.prepare(`SELECT * FROM tasks WHERE root_id = ? ORDER BY started_at ASC`),
@@ -107,7 +109,7 @@ export function createDatabase(dbPath, runtime) {
       parentId: row.parent_id, rootId: row.root_id,
       callback: row.callback, cwd: row.cwd, createdBy: row.created_by || null, closedAt: row.closed_at || null,
       prUrl: row.pr_url || null, branch: row.branch || null,
-      costUsd: row.cost_usd || null, usage: row.usage_json ? JSON.parse(row.usage_json) : null,
+      costUsd: row.cost_usd || null, usage: row.usage_json ? JSON.parse(row.usage_json) : null, runner: row.runner || null,
       pid: runningPids.get(row.id) || null,
       output: liveOutputs.get(row.id)?.lastText || null,
       events: liveOutputs.get(row.id)?.events || (row.events_json ? JSON.parse(row.events_json) : null),

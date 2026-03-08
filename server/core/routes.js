@@ -135,6 +135,7 @@ export function registerRoutes(app, ctx) {
     const user = getCfUser(c);
     const now = new Date().toISOString();
     stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
+    stmts.updateRunner.run(runnerType, id);
     if (branch) stmts.setThreadPr.run(null, branch, id);
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model });
 
@@ -252,6 +253,7 @@ export function registerRoutes(app, ctx) {
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
     stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
+    stmts.updateRunner.run(runnerType, id);
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
@@ -392,8 +394,12 @@ export function registerRoutes(app, ctx) {
     const callbackUrl = `http://localhost:${port}/internal/pr-callback/${rootId}`;
     const prompt = `この作業の変更をPRにしてください。git diff で差分を確認し、適切なコミットメッセージでコミットし、gh pr create でPRを作成してください。`;
 
+    // Use same runner as the original task (detect from root or thread tasks)
+    const rootRunner = rootTask?.runner || task.runner || "claude";
+
     stmts.insert.run(prTaskId, prompt, new Date().toISOString(), callbackUrl, cwd, sessionId, rootId, rootId, null, null);
-    runClaude(prTaskId, prompt, 30, sessionId, cwd);
+    stmts.updateRunner.run(rootRunner, prTaskId);
+    runTask(prTaskId, prompt, 30, sessionId, cwd, rootRunner);
 
     return c.json({ status: "pr_creating", taskId: prTaskId });
   });
