@@ -179,6 +179,9 @@ export async function createApp(config) {
   // --- Resume stale tasks ---
   runner.resumeStaleTasks();
 
+  // Expose WebSocket proxy lookup for index.js upgrade handler
+  app.wsProxy = (subdomain) => worktrees.getDevServerBySubdomain(subdomain);
+
   return {
     app,
     runner,
