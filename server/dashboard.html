@@ -367,8 +367,10 @@
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
         </select>
-        <select id="modelSelect" title="モデル選択" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+        <select id="modelSelect" title="モデル選択" onchange="updateReasoningSelect()" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
           <option value="">default</option>
+        </select>
+        <select id="reasoningSelect" title="推論レベル" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer;display:none">
         </select>
         <button id="sendBtn" onclick="sendTask()">送信</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
@@ -691,8 +693,9 @@ function renderThreadItem(t) {
 function getRunnerName(t) {
   const initEvt = (t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
   if (!initEvt) return '(unknown)';
-  if (initEvt.runner === 'codex') return 'CODEX';
-  return 'CLAUDE';
+  const name = initEvt.runner === 'codex' ? 'CODEX' : 'CLAUDE';
+  const model = initEvt.model && initEvt.model !== '(default)' ? ` <span style="color:#666;font-size:0.7rem">model: ${initEvt.model}${initEvt.reasoning ? ' / ' + initEvt.reasoning : ''}</span>` : '';
+  return name + model;
 }
 
 function renderDetailMsg(t, isReply, isLast) {
@@ -883,7 +886,8 @@ function renderDetail(t) {
   let sessionInfoHtml = '';
   const initEvent = allTasks.flatMap(t => t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
   if (initEvent) {
-    sessionInfoHtml = `<div class="session-info">${initEvent.model || '?'} · ${(initEvent.tools || []).length} tools</div>`;
+    const reasoningLabel = initEvent.reasoning ? ` · reasoning: ${initEvent.reasoning}` : '';
+    sessionInfoHtml = `<div class="session-info">${initEvent.model || '?'} · ${(initEvent.tools || []).length} tools${reasoningLabel}</div>`;
   }
   document.getElementById('detailSessionInfo').innerHTML = sessionInfoHtml;
 
@@ -1197,7 +1201,25 @@ function updateModelSelect() {
   const runner = document.getElementById('runnerSelect').value;
   const sel = document.getElementById('modelSelect');
   const models = MODEL_OPTIONS[runner] || [];
-  sel.innerHTML = '<option value="">default</option>' + models.map(m => `<option value="${m}">${m}</option>`).join('');
+  // codex models are objects with slug/reasoningLevels, claude models are strings
+  sel.innerHTML = '<option value="">default</option>' + models.map(m => {
+    const slug = typeof m === 'string' ? m : m.slug;
+    return `<option value="${slug}">${slug}</option>`;
+  }).join('');
+  updateReasoningSelect();
+}
+function updateReasoningSelect() {
+  const runner = document.getElementById('runnerSelect').value;
+  const modelSlug = document.getElementById('modelSelect').value;
+  const sel = document.getElementById('reasoningSelect');
+  if (runner !== 'codex') { sel.style.display = 'none'; return; }
+  const models = MODEL_OPTIONS.codex || [];
+  const model = models.find(m => (typeof m === 'string' ? m : m.slug) === (modelSlug || models[0]?.slug));
+  const levels = model?.reasoningLevels || [];
+  const defaultLevel = model?.defaultReasoning || 'medium';
+  if (levels.length === 0) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  sel.innerHTML = levels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('');
 }
 loadModels();
 
@@ -1216,8 +1238,10 @@ async function sendTask() {
     const branch = branchInput.value.trim();
     const runner = document.getElementById('runnerSelect').value;
     const model = document.getElementById('modelSelect').value;
+    const reasoning = runner === 'codex' ? document.getElementById('reasoningSelect').value : '';
     const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30, runner };
     if (model) body.model = model;
+    if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -1245,8 +1269,10 @@ async function sendDetailReply() {
   try {
     const runner = document.getElementById('runnerSelect').value;
     const model = document.getElementById('modelSelect').value;
+    const reasoning = runner === 'codex' ? document.getElementById('reasoningSelect').value : '';
     const body = { prompt: prompt || '添付ファイルを確認してください', runner };
     if (model) body.model = model;
+    if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = '';

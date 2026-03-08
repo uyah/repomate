@@ -202,7 +202,8 @@ export function createClaudeRunner(config) {
     const liveData = setupLiveData(taskId);
 
     const codexModel = opts.model || null;
-    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", tools: [] });
+    const codexReasoning = opts.reasoning || null;
+    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", reasoning: codexReasoning, tools: [] });
 
     (async () => {
       let lastResultText = "";
@@ -216,6 +217,7 @@ export function createClaudeRunner(config) {
           args.push("resume", sessionId);
         }
         args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
+        if (codexReasoning) args.push("-c", `reasoning_effort="${codexReasoning}"`);
         if (!sessionId) {
           // --cd and -m are only valid for new sessions, not resume
           if (codexModel) args.push("-m", codexModel);

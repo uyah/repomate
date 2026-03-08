@@ -38,7 +38,11 @@ export function registerRoutes(app, ctx) {
         const data = JSON.parse(readFileSync(codexCachePath, "utf-8"));
         cachedModels.codex = (data.models || [])
           .filter(m => m.visibility === "list")
-          .map(m => m.slug);
+          .map(m => ({
+            slug: m.slug,
+            reasoningLevels: (m.supported_reasoning_levels || []).map(l => l.effort),
+            defaultReasoning: m.default_reasoning_level || null,
+          }));
       }
     } catch (e) { console.error("[models] codex fetch failed:", e.message); }
 
@@ -54,7 +58,7 @@ export function registerRoutes(app, ctx) {
     } catch (e) { console.error("[models] claude fetch failed:", e.message); }
 
     console.log(`[models] Claude: ${cachedModels.claude.join(", ") || "(none)"}`);
-    console.log(`[models] Codex: ${cachedModels.codex.join(", ") || "(none)"}`);
+    console.log(`[models] Codex: ${cachedModels.codex.map(m => m.slug).join(", ") || "(none)"}`);
   }
 
   // Load in background thread to not block startup
@@ -108,7 +112,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -137,7 +141,7 @@ export function registerRoutes(app, ctx) {
     stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
     stmts.updateRunner.run(runnerType, id);
     if (branch) stmts.setThreadPr.run(null, branch, id);
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model });
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning });
 
     return c.json({ id, status: "accepted" }, 202);
   });
@@ -232,7 +236,7 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const { prompt, maxTurns, files, runner: runnerType, model } = await c.req.json();
+    const { prompt, maxTurns, files, runner: runnerType, model, reasoning } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -254,7 +258,7 @@ export function registerRoutes(app, ctx) {
     const user = getCfUser(c);
     stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
     stmts.updateRunner.run(runnerType, id);
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model });
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
   });
