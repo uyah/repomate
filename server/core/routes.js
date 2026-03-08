@@ -27,28 +27,11 @@ export function registerRoutes(app, ctx) {
     });
   });
 
-  // --- Available models (fetched from CLIs at startup) ---
+  // --- Available models (from CLI caches, updated in background) ---
   const cachedModels = { claude: [], codex: [] };
 
-  // Load models async (non-blocking)
-  (async () => {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileP = promisify(execFile);
-    const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
-    delete env.CLAUDECODE;
-
-    // Claude models from CLI
-    try {
-      const { stdout } = await execFileP("claude", ["models"], { encoding: "utf-8", timeout: 30000, env });
-      const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
-      if (matches && matches.length > 0) {
-        cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
-        console.log(`[models] Claude: ${cachedModels.claude.join(", ")}`);
-      }
-    } catch (e) { console.error("[models] claude fetch failed:", e.message); }
-
-    // Codex models from ~/.codex/models_cache.json
+  function loadModels() {
+    // Codex: read ~/.codex/models_cache.json (fast, synchronous)
     try {
       const codexCachePath = join(process.env.HOME || "/tmp", ".codex", "models_cache.json");
       if (existsSync(codexCachePath)) {
@@ -56,10 +39,26 @@ export function registerRoutes(app, ctx) {
         cachedModels.codex = (data.models || [])
           .filter(m => m.visibility === "list")
           .map(m => m.slug);
-        console.log(`[models] Codex: ${cachedModels.codex.join(", ")}`);
       }
     } catch (e) { console.error("[models] codex fetch failed:", e.message); }
-  })();
+
+    // Claude: execFileSync with generous timeout (claude models is an LLM call)
+    try {
+      const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
+      delete env.CLAUDECODE;
+      const stdout = execSync("claude models", { encoding: "utf-8", timeout: 60000, env });
+      const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
+      if (matches && matches.length > 0) {
+        cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
+      }
+    } catch (e) { console.error("[models] claude fetch failed:", e.message); }
+
+    console.log(`[models] Claude: ${cachedModels.claude.join(", ") || "(none)"}`);
+    console.log(`[models] Codex: ${cachedModels.codex.join(", ") || "(none)"}`);
+  }
+
+  // Load in background thread to not block startup
+  setTimeout(loadModels, 100);
   app.get("/config/models", (c) => c.json(cachedModels));
 
   // --- File upload ---
