@@ -43,7 +43,29 @@ export function createClaudeRunner(config) {
     if (abortController.signal.aborted) {
       stmts.update.run("cancelled", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
     } else if (resultSubtype === "error_max_turns") {
-      stmts.update.run("max_turns", completedAt, lastResultText || null, "max turns reached", capturedSessionId, eventsJson, taskId);
+      // Auto-continue: resume in the same session instead of stopping
+      stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+      if (totalCostUsd != null || usageData) {
+        stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
+      }
+      const task = stmts.get.get(taskId);
+      const rootId = task?.root_id || taskId;
+      const runner = task?.runner;
+      const cwd = task?.cwd;
+      // Count existing auto-continues in this thread to prevent infinite loops
+      const MAX_AUTO_CONTINUES = 5;
+      const contCount = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE root_id = ? AND prompt LIKE '[auto-continue]%'`).get(rootId).c;
+      if (capturedSessionId && runner && cwd && contCount < MAX_AUTO_CONTINUES) {
+        console.log(`[${taskId}] max_turns reached, auto-continuing (${contCount + 1}/${MAX_AUTO_CONTINUES}) with session ${capturedSessionId}`);
+        const continueId = `cont-${taskId.slice(0, 4)}-${Date.now().toString(36)}`;
+        const continuePrompt = "[auto-continue] max turns到達のため自動継続。前のタスクの続きを進めてください。";
+        stmts.insert.run(continueId, continuePrompt, new Date().toISOString(), null, cwd, capturedSessionId, taskId, rootId, task.slack_thread_key || null, task.created_by || null, runner);
+        runTask(continueId, continuePrompt, maxTurns, capturedSessionId, cwd, runner);
+      } else if (contCount >= MAX_AUTO_CONTINUES) {
+        console.log(`[${taskId}] max_turns reached but auto-continue limit (${MAX_AUTO_CONTINUES}) exceeded`);
+        stmts.update.run("max_turns", completedAt, lastResultText || null, "max turns reached (auto-continue limit)", capturedSessionId, eventsJson, taskId);
+      }
+      return; // skip the rest of finalizeTask (cost already saved, no callback needed)
     } else if (!lastErrorText) {
       const costInfo = totalCostUsd != null ? ` ($${totalCostUsd.toFixed(4)})` : "";
       stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
