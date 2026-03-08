@@ -27,27 +27,28 @@ export function registerRoutes(app, ctx) {
     });
   });
 
-  // --- Available models (cached, fetched from CLIs at startup) ---
-  let cachedModels = null;
-  function fetchAvailableModels() {
-    const models = { claude: [], codex: [] };
-    // Claude: parse `claude models` output
+  // --- Available models (fetched async from CLIs, cached after first success) ---
+  const cachedModels = {
+    claude: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    codex: ["gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.1-codex-mini"],
+  };
+  // Async update from CLI (non-blocking)
+  (async () => {
     try {
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileP = promisify(execFile);
       const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
       delete env.CLAUDECODE;
-      const out = execSync("claude models 2>/dev/null", { encoding: "utf-8", timeout: 10000, env });
-      const matches = out.match(/`(claude-[a-z0-9-]+)`/g);
-      if (matches) models.claude = matches.map(m => m.replace(/`/g, ""));
-    } catch (e) { console.error("[models] claude models failed:", e.message); }
-    // Codex: no non-interactive model list command available
-    // Use the list from `codex /model` (interactive only)
-    models.codex = ["gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.1-codex-mini"];
-    return models;
-  }
-  app.get("/config/models", (c) => {
-    if (!cachedModels) cachedModels = fetchAvailableModels();
-    return c.json(cachedModels);
-  });
+      const { stdout } = await execFileP("claude", ["models"], { encoding: "utf-8", timeout: 30000, env });
+      const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
+      if (matches && matches.length > 0) {
+        cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
+        console.log(`[models] Claude models updated: ${cachedModels.claude.join(", ")}`);
+      }
+    } catch (e) { console.error("[models] claude models fetch failed:", e.message); }
+  })();
+  app.get("/config/models", (c) => c.json(cachedModels));
 
   // --- File upload ---
   app.post("/upload", async (c) => {
