@@ -1,5 +1,5 @@
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 
 /**
@@ -176,6 +176,15 @@ export function createWorktreeManager(config) {
   function startDevServer(taskId, cwd) {
     if (!devServerConfig) return null;
     if (devServerProcs.has(taskId)) return dbStmts.devServerGet.get(taskId);
+
+    // Clean up stale .next lock/cache to prevent "Unable to acquire lock" crash
+    const nextDir = join(cwd, ".next");
+    if (existsSync(nextDir)) {
+      try {
+        rmSync(nextDir, { recursive: true, force: true });
+        console.log(`[dev:${taskId}] Cleaned .next directory`);
+      } catch {}
+    }
 
     // Install dependencies if installCommand is configured
     const installCmd = devServerConfig.installCommand || "npm install";
