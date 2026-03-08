@@ -522,22 +522,57 @@ export function registerRoutes(app, ctx) {
     const rootId = task.root_id || task.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread has running tasks" }, 409);
 
+    // Find the next task after target (the first one to be deleted) to get its timestamp
+    const nextTask = db.prepare(
+      `SELECT started_at FROM tasks WHERE root_id = ? AND started_at > (SELECT started_at FROM tasks WHERE id = ?) ORDER BY started_at ASC LIMIT 1`
+    ).get(rootId, task.id);
+    const cutoffTime = nextTask?.started_at || null;
+
     // Delete all replies that came after this task
     const result = stmts.deleteAfter.run(rootId, task.id, task.id);
-    // Delete Claude session files from disk (prevents auto-resume of old conversation with stale images)
+
+    // Truncate Claude session JSONL to the rollback point (preserves context, removes bad turns)
     const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd;
-    if (cwd) {
+    const sessionId = task.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    let sessionTruncated = false;
+    if (cwd && sessionId && cutoffTime) {
       try {
         const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
-        const sessionDir = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug);
-        if (existsSync(sessionDir)) {
-          rmSync(sessionDir, { recursive: true, force: true });
-          console.log(`[rollback] Deleted session dir: ${sessionDir}`);
+        const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId + ".jsonl");
+        if (existsSync(sessionFile)) {
+          const content = readFileSync(sessionFile, "utf-8");
+          const lines = content.split("\n");
+          // Find the queue-operation line closest to cutoffTime and truncate before it
+          let cutLine = lines.length;
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            try {
+              const obj = JSON.parse(line);
+              // queue-operation enqueue marks the start of a new reply
+              if (obj.type === "queue-operation" && obj.operation === "enqueue" && obj.timestamp >= cutoffTime) {
+                cutLine = i;
+                break;
+              }
+              // Also check user messages as fallback
+              if (obj.type === "user" && obj.timestamp && obj.timestamp >= cutoffTime) {
+                // Go back to include the preceding last-prompt/queue-operation lines
+                cutLine = Math.max(0, i - 2);
+                break;
+              }
+            } catch {}
+          }
+          if (cutLine < lines.length) {
+            const truncated = lines.slice(0, cutLine).join("\n");
+            writeFileSync(sessionFile, truncated + "\n");
+            sessionTruncated = true;
+            console.log(`[rollback] Truncated session JSONL at line ${cutLine}/${lines.length}`);
+          }
         }
-      } catch (e) { console.error(`[rollback] Failed to delete session dir: ${e.message}`); }
+      } catch (e) { console.error(`[rollback] Failed to truncate session: ${e.message}`); }
     }
-    console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies), session cleared`);
-    return c.json({ status: "rolled_back", targetId: task.id, deleted: result.changes });
+    console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies), session ${sessionTruncated ? "truncated" : "unchanged"}`);
+    return c.json({ status: "rolled_back", targetId: task.id, deleted: result.changes, sessionTruncated });
   });
 
   // --- Close thread (manual done, no changes) ---
