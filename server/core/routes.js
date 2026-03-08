@@ -33,10 +33,12 @@ export function registerRoutes(app, ctx) {
     const models = { claude: [], codex: [] };
     // Claude: parse `claude models` output
     try {
-      const out = execSync("claude models 2>/dev/null", { encoding: "utf-8", timeout: 10000 });
+      const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
+      delete env.CLAUDECODE;
+      const out = execSync("claude models 2>/dev/null", { encoding: "utf-8", timeout: 10000, env });
       const matches = out.match(/`(claude-[a-z0-9-]+)`/g);
       if (matches) models.claude = matches.map(m => m.replace(/`/g, ""));
-    } catch {}
+    } catch (e) { console.error("[models] claude models failed:", e.message); }
     // Codex: no non-interactive model list command available
     // Use the list from `codex /model` (interactive only)
     models.codex = ["gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.1-codex-mini"];
