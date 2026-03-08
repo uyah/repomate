@@ -92,25 +92,36 @@ function killPortUser(port) {
   if (baseDomain) {
     server.on("upgrade", (req, socket, head) => {
       const host = req.headers.host || "";
-      if (!host.endsWith(`.${baseDomain}`)) return socket.destroy();
+      console.log(`[ws] upgrade request: host=${host} url=${req.url}`);
+      if (!host.endsWith(`.${baseDomain}`)) {
+        console.log(`[ws] not a dev server subdomain, ignoring`);
+        return;  // Don't destroy — let other handlers (like Hono) handle it
+      }
       const subdomain = host.replace(`.${baseDomain}`, "");
       const ds = worktrees.getDevServerBySubdomain(subdomain);
-      if (!ds) return socket.destroy();
+      if (!ds) {
+        console.log(`[ws] no dev server for subdomain ${subdomain}`);
+        return socket.destroy();
+      }
 
+      console.log(`[ws] proxying to localhost:${ds.port}`);
       const target = createConnection({ port: ds.port, host: "127.0.0.1" }, () => {
         // Forward the original HTTP upgrade request
         const path = req.url || "/";
-        target.write(`${req.method} ${path} HTTP/${req.httpVersion}\r\n`);
+        target.write(`GET ${path} HTTP/${req.httpVersion}\r\n`);
+        // Rewrite Host header to localhost for Next.js
         for (let i = 0; i < req.rawHeaders.length; i += 2) {
-          target.write(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`);
+          const key = req.rawHeaders[i];
+          const val = key.toLowerCase() === "host" ? `localhost:${ds.port}` : req.rawHeaders[i + 1];
+          target.write(`${key}: ${val}\r\n`);
         }
         target.write("\r\n");
         if (head.length > 0) target.write(head);
         target.pipe(socket);
         socket.pipe(target);
       });
-      target.on("error", () => socket.destroy());
-      socket.on("error", () => target.destroy());
+      target.on("error", (err) => { console.log(`[ws] target error: ${err.message}`); socket.destroy(); });
+      socket.on("error", (err) => { console.log(`[ws] socket error: ${err.message}`); target.destroy(); });
     });
   }
 })();
