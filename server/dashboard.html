@@ -541,7 +541,8 @@ function renderEvents(events) {
       </div>`;
     } else if (g.type === 'system') {
       if (g.subtype === 'init') {
-        html += `<div class="evt-system">model: ${esc(g.model || '?')}</div>`;
+        const modelLabel = g.model === 'codex' ? 'Codex CLI' : g.model;
+        html += `<div class="evt-system">model: ${esc(modelLabel || '?')}</div>`;
       } else if (g.subtype === 'compact_boundary') {
         html += `<div class="evt-system"><span class="compact-badge">compact</span> ${g.pre_tokens ? g.pre_tokens.toLocaleString() + ' tokens' : ''}</div>`;
       }
@@ -684,6 +685,12 @@ function renderThreadItem(t) {
 }
 
 // === Detail: full thread messages ===
+function getRunnerName(t) {
+  const initEvt = (t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
+  if (initEvt?.model === 'codex') return 'CODEX';
+  return 'CLAUDE';
+}
+
 function renderDetailMsg(t, isReply, isLast) {
   // Only show badge on the last task, or running/failed tasks
   const showBadge = isLast || t.status === 'running' || ['failed','interrupted','cancelled'].includes(t.status);
@@ -718,32 +725,32 @@ function renderDetailMsg(t, isReply, isLast) {
 
   if (t.status === 'running') {
     html += `<div class="msg msg-assistant msg-reply">
-      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div id="events-${t.id}">${t.events ? renderEvents(t.events) : '<div class="msg-text stream-text">考え中...</div>'}</div>
     </div>`;
     startStream(t.id);
   } else if (t.events && t.events.length > 0) {
     const retryable = ['failed','interrupted','cancelled','max_turns'].includes(t.status);
     html += `<div class="msg msg-assistant msg-reply">
-      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div>${renderEvents(t.events)}</div>
       ${t.error ? `<div class="msg-text error-text">${esc(String(t.error).slice(0, 500))}</div>` : ''}
       ${t.status === 'max_turns' ? `<button class="retry-btn" onclick="retryTask('${t.id}')">続行 (max turns到達)</button>` : retryable ? `<button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>` : ''}
     </div>`;
   } else if (t.result) {
     html += `<div class="msg msg-assistant msg-reply">
-      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       ${renderMarkdown(String(t.result).slice(0, 4000))}
     </div>`;
   } else if (t.error) {
     html += `<div class="msg msg-assistant msg-reply">
-      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div class="msg-text error-text">${esc(String(t.error).slice(0, 500))}</div>
       <button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>
     </div>`;
   } else if (['interrupted','cancelled'].includes(t.status)) {
     html += `<div class="msg msg-assistant msg-reply">
-      <div class="msg-meta"><span class="msg-role msg-role-assistant">Claude</span> ${meta}</div>
+      <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div class="msg-text stream-text">(中断されました)</div>
       <button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>
     </div>`;

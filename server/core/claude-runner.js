@@ -200,7 +200,7 @@ export function createClaudeRunner(config) {
     runningPids.set(taskId, process.pid);
     const liveData = setupLiveData(taskId);
 
-    liveData.events.push({ type: "system", subtype: "init", model: "codex", tools: [] });
+    liveData.events.push({ type: "system", subtype: "init", model: "codex", runner: "codex", tools: [] });
 
     (async () => {
       let lastResultText = "";
