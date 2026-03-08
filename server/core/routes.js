@@ -27,26 +27,38 @@ export function registerRoutes(app, ctx) {
     });
   });
 
-  // --- Available models (fetched async from CLIs, cached after first success) ---
-  const cachedModels = {
-    claude: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-    codex: ["gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.1-codex-mini"],
-  };
-  // Async update from CLI (non-blocking)
+  // --- Available models (fetched from CLIs at startup) ---
+  const cachedModels = { claude: [], codex: [] };
+
+  // Load models async (non-blocking)
   (async () => {
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const execFileP = promisify(execFile);
+    const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
+    delete env.CLAUDECODE;
+
+    // Claude models from CLI
     try {
-      const { execFile } = await import("child_process");
-      const { promisify } = await import("util");
-      const execFileP = promisify(execFile);
-      const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
-      delete env.CLAUDECODE;
       const { stdout } = await execFileP("claude", ["models"], { encoding: "utf-8", timeout: 30000, env });
       const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
       if (matches && matches.length > 0) {
         cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
-        console.log(`[models] Claude models updated: ${cachedModels.claude.join(", ")}`);
+        console.log(`[models] Claude: ${cachedModels.claude.join(", ")}`);
       }
-    } catch (e) { console.error("[models] claude models fetch failed:", e.message); }
+    } catch (e) { console.error("[models] claude fetch failed:", e.message); }
+
+    // Codex models from ~/.codex/models_cache.json
+    try {
+      const codexCachePath = join(process.env.HOME || "/tmp", ".codex", "models_cache.json");
+      if (existsSync(codexCachePath)) {
+        const data = JSON.parse(readFileSync(codexCachePath, "utf-8"));
+        cachedModels.codex = (data.models || [])
+          .filter(m => m.visibility === "list")
+          .map(m => m.slug);
+        console.log(`[models] Codex: ${cachedModels.codex.join(", ")}`);
+      }
+    } catch (e) { console.error("[models] codex fetch failed:", e.message); }
   })();
   app.get("/config/models", (c) => c.json(cachedModels));
 
