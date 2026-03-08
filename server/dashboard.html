@@ -107,19 +107,27 @@
     background: #0e0e0e;
   }
   .list-input .file-preview { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-  .list-input .input-row { display: flex; gap: 4px; align-items: center; }
-  .list-input .input-row select { flex-shrink: 0; max-width: 120px; }
-  .list-input input[type="text"] {
-    flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+  .list-input textarea {
+    width: 100%; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
     padding: 9px 10px; color: #fff; font-size: 0.85rem; outline: none;
+    resize: none; min-height: 38px; max-height: 120px; line-height: 1.4;
+    font-family: inherit; overflow-y: auto;
   }
-  .list-input input[type="text"]:focus { border-color: #60a5fa; }
+  .list-input textarea:focus { border-color: #60a5fa; }
+  .input-controls {
+    display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: wrap;
+  }
+  .input-controls select {
+    flex-shrink: 0; padding: 6px 4px; background: #2a2a2a; border: 1px solid #444;
+    border-radius: 4px; color: #eee; font-size: 0.75rem; cursor: pointer; max-width: 120px;
+  }
+  .input-controls .spacer { flex: 1; }
   .list-input button {
     background: #2563eb; color: #fff; border: none; border-radius: 8px;
-    padding: 9px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+    padding: 7px 12px; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0;
   }
   .list-input button:disabled { background: #333; color: #666; }
-  .attach-btn-main { background: #2a2a2a !important; color: #aaa !important; padding: 9px 10px !important; cursor: pointer; }
+  .attach-btn-main { background: #2a2a2a !important; color: #aaa !important; padding: 7px 10px !important; cursor: pointer; }
 
   /* === Detail Pane === */
   .detail-header {
@@ -202,17 +210,20 @@
     background: #0e0e0e;
   }
   .detail-reply .file-preview { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-  .detail-reply .input-row { display: flex; gap: 6px; }
-  .detail-reply input[type="text"] {
-    flex: 1; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+  .detail-reply textarea {
+    width: 100%; background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
     padding: 9px 10px; color: #fff; font-size: 0.85rem; outline: none;
+    resize: none; min-height: 38px; max-height: 120px; line-height: 1.4;
+    font-family: inherit; overflow-y: auto;
   }
-  .detail-reply input[type="text"]:focus { border-color: #60a5fa; }
+  .detail-reply textarea:focus { border-color: #60a5fa; }
+  .detail-reply .input-controls { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .detail-reply .input-controls .spacer { flex: 1; }
   .detail-reply button {
     background: #2563eb; color: #fff; border: none; border-radius: 8px;
-    padding: 9px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+    padding: 7px 12px; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex-shrink: 0;
   }
-  .detail-reply .attach-btn { background: #2a2a2a; color: #aaa; padding: 9px 10px; cursor: pointer; border: none; border-radius: 8px; }
+  .detail-reply .attach-btn { background: #2a2a2a; color: #aaa; padding: 7px 10px; cursor: pointer; border: none; border-radius: 8px; flex-shrink: 0; }
 
   /* File preview */
   .file-preview { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -361,20 +372,21 @@
       <div id="branchInputRow" style="display:none;margin-bottom:4px">
         <input id="branchInput" type="text" placeholder="ブランチ名 (例: task/abc123, fix/bug)" style="width:100%;padding:6px 8px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.8rem" autocomplete="off">
       </div>
-      <div class="input-row">
-        <input id="promptInput" type="text" placeholder="新しいタスク..." autocomplete="off">
-        <select id="runnerSelect" title="ランナー選択" onchange="updateModelSelect()" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+      <textarea id="promptInput" rows="1" placeholder="新しいタスク... (Shift+Enterで改行)" autocomplete="off"></textarea>
+      <div class="input-controls">
+        <select id="runnerSelect" title="ランナー選択" onchange="updateModelSelect()">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
         </select>
-        <select id="modelSelect" title="モデル選択" onchange="updateReasoningSelect()" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+        <select id="modelSelect" title="モデル選択" onchange="updateReasoningSelect()">
           <option value="">default</option>
         </select>
-        <select id="reasoningSelect" title="推論レベル" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer;display:none">
+        <select id="reasoningSelect" title="推論レベル" style="display:none">
         </select>
-        <button id="sendBtn" onclick="sendTask()">送信</button>
-        <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
+        <span class="spacer"></span>
         <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
+        <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
+        <button id="sendBtn" onclick="sendTask()">送信</button>
       </div>
       <input type="file" id="mainFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
     </div>
@@ -395,10 +407,11 @@
       <div id="detailContextBar"></div>
       <div class="detail-reply" id="detailReply" style="display:none">
         <div class="file-preview" id="detailFilePreview"></div>
-        <div class="input-row">
-          <input type="text" id="detailReplyInput" placeholder="続きの指示..." autocomplete="off">
-          <button onclick="sendDetailReply()">返信</button>
+        <textarea id="detailReplyInput" rows="1" placeholder="続きの指示... (Shift+Enterで改行)" autocomplete="off"></textarea>
+        <div class="input-controls">
+          <span class="spacer"></span>
           <button class="attach-btn" onclick="document.getElementById('detailFileInput').click()">+</button>
+          <button onclick="sendDetailReply()">返信</button>
         </div>
         <input type="file" id="detailFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
       </div>
@@ -1245,7 +1258,7 @@ async function sendTask() {
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    input.value = '';
+    input.value = ''; input.style.height = 'auto';
     branchInput.value = '';
     document.getElementById('branchInputRow').style.display = 'none';
     pendingFiles.length = 0;
@@ -1275,7 +1288,7 @@ async function sendDetailReply() {
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    input.value = '';
+    input.value = ''; input.style.height = 'auto';
     detailReplyFiles.length = 0;
     renderDetailFilePreview();
     setTimeout(refresh, 500);
@@ -1410,6 +1423,7 @@ function useSuggestion(el) {
   const input = document.getElementById('detailReplyInput');
   if (input) {
     input.value = suggestion;
+    autoResize(input);
     input.focus();
   }
 }
@@ -1426,8 +1440,21 @@ async function discardChanges(taskId) {
 }
 
 // === Keyboard ===
-document.getElementById('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) sendTask(); });
-document.getElementById('detailReplyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) sendDetailReply(); });
+// Textarea auto-resize
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+document.getElementById('promptInput').addEventListener('input', function() { autoResize(this); });
+document.getElementById('detailReplyInput').addEventListener('input', function() { autoResize(this); });
+
+// Enter=send, Shift+Enter=newline
+document.getElementById('promptInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendTask(); }
+});
+document.getElementById('detailReplyInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDetailReply(); }
+});
 document.getElementById('searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { searchQuery = e.target.value.trim(); currentPage = 1; refresh(); } });
 
 // === Init ===
