@@ -6,14 +6,19 @@ import { join, extname } from "path";
 /**
  * Register all HTTP routes on the Hono app.
  * @param {import('hono').Hono} app
- * @param {object} ctx - { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser }
+ * @param {object} ctx - { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, config, getCfUser }
  */
 export function registerRoutes(app, ctx) {
-  const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
-  const { runClaude, runTask, runClaudeSync, cancelTask, runningPids, liveOutputs } = runner;
+  const { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, config, getCfUser } = ctx;
+  const { runTask, cancelTask, runningPids, liveOutputs } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
+
+  // --- Helper: insert task with runner ---
+  function insertTask(id, prompt, { callback, cwd, sessionId, parentId, rootId, slackThreadKey, user, runner: taskRunner }) {
+    stmts.insert.run(id, prompt, new Date().toISOString(), callback || null, cwd || null, sessionId || null, parentId || null, rootId || null, slackThreadKey || null, user || null, taskRunner);
+  }
 
   // --- Health ---
   app.get("/health", (c) => {
@@ -137,9 +142,7 @@ export function registerRoutes(app, ctx) {
     const id = randomUUID().slice(0, 8);
     const worktreeCwd = createWorktree(id, branch ? { branch: `origin/${branch}` } : undefined);
     const user = getCfUser(c);
-    const now = new Date().toISOString();
-    stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
-    stmts.updateRunner.run(runnerType, id);
+    insertTask(id, displayPrompt, { callback, cwd: worktreeCwd, rootId: id, user, runner: runnerType });
     if (branch) stmts.setThreadPr.run(null, branch, id);
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning });
 
@@ -148,15 +151,16 @@ export function registerRoutes(app, ctx) {
 
   // --- Sync task ---
   app.post("/task/sync", async (c) => {
-    const { prompt, maxTurns } = await c.req.json();
+    const { prompt, maxTurns, runner: runnerType } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
+    const effectiveRunner = runnerType || "claude";
 
     const id = randomUUID().slice(0, 8);
     const worktreeCwd = createWorktree(id);
     const user = getCfUser(c);
-    stmts.insert.run(id, prompt, new Date().toISOString(), null, worktreeCwd, null, null, id, null, user);
+    insertTask(id, prompt, { cwd: worktreeCwd, rootId: id, user, runner: effectiveRunner });
 
-    const task = await runClaudeSync(id, prompt, maxTurns || MAX_TURNS, null, worktreeCwd);
+    const task = await runner.runSync(id, prompt, maxTurns || MAX_TURNS, null, worktreeCwd, effectiveRunner);
     return c.json(task);
   });
 
@@ -256,8 +260,7 @@ export function registerRoutes(app, ctx) {
     const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
-    stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
-    stmts.updateRunner.run(runnerType, id);
+    insertTask(id, displayPrompt, { cwd, sessionId, parentId: original.id, rootId, user, runner: runnerType });
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
@@ -340,21 +343,18 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    // Resume session if available (check whole thread), otherwise re-run the prompt
     const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
-    const retryRunner = original.runner
-      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
-    if (!retryRunner) return c.json({ error: "runner not detected in thread" }, 400);
+    const taskRunner = resolveThreadRunner(original, rootId);
+    if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
+
     const id = randomUUID().slice(0, 8);
     const prompt = original.prompt;
-
     const user = getCfUser(c);
-    stmts.insert.run(id, `[retry] ${prompt}`, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, original.slack_thread_key || null, user);
-    stmts.updateRunner.run(retryRunner, id);
-    runTask(id, prompt, MAX_TURNS, sessionId, cwd, retryRunner);
+    insertTask(id, `[retry] ${prompt}`, { cwd, sessionId, parentId: original.id, rootId, slackThreadKey: original.slack_thread_key, user, runner: taskRunner });
+    runTask(id, prompt, MAX_TURNS, sessionId, cwd, taskRunner);
 
-    return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId, runner: retryRunner }, 202);
+    return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId, runner: taskRunner }, 202);
   });
 
   // --- Merge worktree ---
@@ -379,7 +379,7 @@ export function registerRoutes(app, ctx) {
     return c.json({ error: `merge failed: ${result.error}` }, 500);
   });
 
-  // --- Create PR (via Claude Code) ---
+  // --- Create PR ---
   app.post("/task/:id/pr", async (c) => {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
@@ -392,24 +392,17 @@ export function registerRoutes(app, ctx) {
     if (!changes) return c.json({ error: "no changes" }, 400);
 
     const rootId = task.root_id || task.id;
-
-    // Resume existing session so Claude has full thread context
-    const sessionRow = stmts.latestSessionInThread.get(rootId);
-    const sessionId = sessionRow?.session_id || null;
+    const sessionId = stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    const taskRunner = resolveThreadRunner(rootTask, rootId) || resolveThreadRunner(task, rootId);
+    if (!taskRunner) return c.json({ error: "runner not detected in thread. Cannot create PR." }, 400);
 
     const prTaskId = `pr-${rootId}-${Date.now()}`;
     const port = config.port || 8080;
     const callbackUrl = `http://localhost:${port}/internal/pr-callback/${rootId}`;
     const prompt = `この作業の変更をPRにしてください。git diff で差分を確認し、適切なコミットメッセージでコミットし、gh pr create でPRを作成してください。`;
 
-    // Use same runner as the original task (detect from root or thread tasks, no fallback)
-    const rootRunner = rootTask?.runner || task.runner
-      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
-    if (!rootRunner) return c.json({ error: "runner not detected in thread. Cannot create PR." }, 400);
-
-    stmts.insert.run(prTaskId, prompt, new Date().toISOString(), callbackUrl, cwd, sessionId, rootId, rootId, null, null);
-    stmts.updateRunner.run(rootRunner, prTaskId);
-    runTask(prTaskId, prompt, 30, sessionId, cwd, rootRunner);
+    insertTask(prTaskId, prompt, { callback: callbackUrl, cwd, sessionId, parentId: rootId, rootId, runner: taskRunner });
+    runTask(prTaskId, prompt, 30, sessionId, cwd, taskRunner);
 
     return c.json({ status: "pr_creating", taskId: prTaskId });
   });
@@ -449,18 +442,16 @@ export function registerRoutes(app, ctx) {
     const sessionId = task.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     if (!sessionId) return c.json({ error: "no session to compact" }, 400);
 
-    const compactRunner = task.runner
-      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
-    if (!compactRunner) return c.json({ error: "runner not detected in thread" }, 400);
+    const taskRunner = resolveThreadRunner(task, rootId);
+    if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
 
     const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const id = randomUUID().slice(0, 8);
     const user = getCfUser(c);
-    stmts.insert.run(id, "[compact] コンテキスト圧縮", new Date().toISOString(), null, cwd, sessionId, task.id, rootId, null, user);
-    stmts.updateRunner.run(compactRunner, id);
-    runTask(id, "/compact", MAX_TURNS, sessionId, cwd, compactRunner);
+    insertTask(id, "[compact] コンテキスト圧縮", { cwd, sessionId, parentId: task.id, rootId, user, runner: taskRunner });
+    runTask(id, "/compact", MAX_TURNS, sessionId, cwd, taskRunner);
 
-    return c.json({ id, status: "accepted", compacting: sessionId, runner: compactRunner }, 202);
+    return c.json({ id, status: "accepted", compacting: sessionId, runner: taskRunner }, 202);
   });
 
   // --- Close thread (manual done, no changes) ---

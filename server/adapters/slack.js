@@ -11,7 +11,7 @@ const { App: SlackApp, LogLevel } = pkg;
  */
 export function registerSlack(app, ctx) {
   const { stmts, userStmts, runner, worktrees, config } = ctx;
-  const { runClaudeSync, runningPids } = runner;
+  const { runSync, runningPids } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const REPO_DIR = config.repoDir;
@@ -191,11 +191,13 @@ export function registerSlack(app, ctx) {
     fullPrompt += `\n\nファイルを生成する場合は ${taskTmpDir} に保存してください。`;
 
     const slackUser = event.user ? await getSlackUserEmail(event.user) : null;
-    stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, worktreeCwd, sessionId, prevTask?.id || null, rootTaskId || id, taskKey, slackUser);
+    // Slack adapter always uses claude runner
+    const SLACK_RUNNER = "claude";
+    stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, worktreeCwd, sessionId, prevTask?.id || null, rootTaskId || id, taskKey, slackUser, SLACK_RUNNER);
     console.log(`[slack] Task ${id} started${sessionId ? ` (resume ${sessionId})` : ""} by ${slackUser}: ${displayPrompt.slice(0, 80)}`);
 
     try {
-      const task = await runClaudeSync(id, fullPrompt, MAX_TURNS, sessionId, worktreeCwd);
+      const task = await runSync(id, fullPrompt, MAX_TURNS, sessionId, worktreeCwd, SLACK_RUNNER);
       const result = task.result || "";
 
       // Auto-continue if max turns reached (up to 3 times)
@@ -204,8 +206,8 @@ export function registerSlack(app, ctx) {
         continuations++;
         console.log(`[slack] Task ${id} hit max turns, auto-continuing (${continuations}/3)...`);
         const continueId = randomUUID().slice(0, 8);
-        stmts.insert.run(continueId, "[auto-continue] max turns reached", new Date().toISOString(), null, task.cwd, task.sessionId, id, rootTaskId || id, taskKey, slackUser);
-        const continueTask = await runClaudeSync(continueId, "続けてください", MAX_TURNS, task.sessionId, task.cwd || null);
+        stmts.insert.run(continueId, "[auto-continue] max turns reached", new Date().toISOString(), null, task.cwd, task.sessionId, id, rootTaskId || id, taskKey, slackUser, SLACK_RUNNER);
+        const continueTask = await runSync(continueId, "続けてください", MAX_TURNS, task.sessionId, task.cwd || null, SLACK_RUNNER);
         Object.assign(task, continueTask);
         id = continueId;
       }

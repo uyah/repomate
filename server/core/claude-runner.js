@@ -21,6 +21,8 @@ export function createClaudeRunner(config) {
   // Backward-compat: expose a pid-like Map for routes that check runningPids.size
   const runningPids = new Map();
 
+  const VALID_RUNNERS = ["claude", "codex"];
+
   // ─── Shared helpers ───
 
   function setupLiveData(taskId) {
@@ -74,7 +76,7 @@ export function createClaudeRunner(config) {
 
   // ─── Claude Code runner (Agent SDK) ───
 
-  function runClaude(taskId, prompt, turns, sessionId, cwd, opts = {}) {
+  function _runClaude(taskId, prompt, turns, sessionId, cwd, opts = {}) {
     const abortController = new AbortController();
     runningTasks.set(taskId, abortController);
     runningPids.set(taskId, process.pid);
@@ -180,7 +182,7 @@ export function createClaudeRunner(config) {
           console.log(`[${taskId}] Session not found, retrying without --resume`);
           runningTasks.delete(taskId); runningPids.delete(taskId); liveOutputs.delete(taskId);
           stmts.update.run("failed", new Date().toISOString(), null, err.message, null, null, taskId);
-          runClaude(taskId, prompt, turns, null, cwd);
+          _runClaude(taskId, prompt, turns, null, cwd);
           return;
         } else {
           lastErrorText = err.message || "Unknown error";
@@ -195,7 +197,7 @@ export function createClaudeRunner(config) {
 
   // ─── Codex runner (CLI exec --json) ───
 
-  function runCodex(taskId, prompt, turns, sessionId, cwd, opts = {}) {
+  function _runCodex(taskId, prompt, turns, sessionId, cwd, opts = {}) {
     const abortController = new AbortController();
     runningTasks.set(taskId, abortController);
     runningPids.set(taskId, process.pid);
@@ -292,7 +294,6 @@ export function createClaudeRunner(config) {
   }
 
   function handleCodexEvent(evt, liveData, setResult) {
-    // Codex JSONL events: thread.started, turn.started, item.started, item.completed, turn.completed
     switch (evt.type) {
       case "item.completed": {
         const item = evt.item;
@@ -341,7 +342,6 @@ export function createClaudeRunner(config) {
         break;
       }
       case "thread.started": {
-        // Update init event with thread_id
         const initEvt = liveData.events.find(e => e.type === "system" && e.subtype === "init");
         if (initEvt) initEvt.threadId = evt.thread_id;
         break;
@@ -349,24 +349,22 @@ export function createClaudeRunner(config) {
     }
   }
 
-  // ─── Unified dispatch ───
-
-  const VALID_RUNNERS = ["claude", "codex"];
+  // ─── Unified dispatch (the ONLY way to run tasks) ───
 
   function runTask(taskId, prompt, turns, sessionId, cwd, runner, opts = {}) {
     if (!runner || !VALID_RUNNERS.includes(runner)) {
       throw new Error(`Invalid runner: ${JSON.stringify(runner)}. Must be one of: ${VALID_RUNNERS.join(", ")}`);
     }
     if (runner === "codex") {
-      runCodex(taskId, prompt, turns, sessionId, cwd, opts);
+      _runCodex(taskId, prompt, turns, sessionId, cwd, opts);
     } else {
-      runClaude(taskId, prompt, turns, sessionId, cwd, opts);
+      _runClaude(taskId, prompt, turns, sessionId, cwd, opts);
     }
   }
 
-  function runClaudeSync(taskId, prompt, turns, sessionId, cwd) {
+  function runSync(taskId, prompt, turns, sessionId, cwd, runner) {
     return new Promise((resolve) => {
-      runClaude(taskId, prompt, turns, sessionId, cwd);
+      runTask(taskId, prompt, turns, sessionId, cwd, runner);
       const check = setInterval(() => {
         const task = stmts.get.get(taskId);
         if (task && task.status !== "running") {
@@ -392,6 +390,7 @@ export function createClaudeRunner(config) {
     console.log(`[startup] Found ${staleTasks.length} interrupted task(s) from previous run`);
     for (const task of staleTasks) {
       if (task.session_id) {
+        // Use stored runner, fallback to claude only for legacy tasks without runner column
         const taskRunner = task.runner || "claude";
         console.log(`[startup] Resuming task ${task.id} (session: ${task.session_id}, runner: ${taskRunner})`);
         const prompt = "続けてください (auto-resumed after server restart)";
@@ -422,5 +421,5 @@ export function createClaudeRunner(config) {
     setTimeout(() => process.exit(0), 1000);
   }
 
-  return { runClaude, runCodex, runTask, runClaudeSync, cancelTask, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
+  return { runTask, runSync, cancelTask, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
 }

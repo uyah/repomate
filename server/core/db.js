@@ -65,10 +65,9 @@ export function createDatabase(dbPath, runtime) {
 
   // --- Prepared statements ---
   const stmts = {
-    insert: db.prepare(`INSERT INTO tasks (id, prompt, status, started_at, callback, cwd, session_id, parent_id, root_id, slack_thread_key, created_by) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`),
+    insert: db.prepare(`INSERT INTO tasks (id, prompt, status, started_at, callback, cwd, session_id, parent_id, root_id, slack_thread_key, created_by, runner) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     update: db.prepare(`UPDATE tasks SET status = ?, completed_at = ?, result = ?, error = ?, session_id = ?, events_json = ? WHERE id = ?`),
     updateCost: db.prepare(`UPDATE tasks SET cost_usd = ?, usage_json = ? WHERE id = ?`),
-    updateRunner: db.prepare(`UPDATE tasks SET runner = ? WHERE id = ?`),
     get: db.prepare(`SELECT * FROM tasks WHERE id = ?`),
     list: db.prepare(`SELECT * FROM tasks WHERE parent_id IS NULL ORDER BY started_at DESC LIMIT ?`),
     thread: db.prepare(`SELECT * FROM tasks WHERE root_id = ? ORDER BY started_at ASC`),
@@ -78,6 +77,7 @@ export function createDatabase(dbPath, runtime) {
     lastBySlackThread: db.prepare(`SELECT * FROM tasks WHERE slack_thread_key = ? ORDER BY started_at DESC LIMIT 1`),
     latestSessionInThread: db.prepare(`SELECT session_id FROM tasks WHERE root_id = ? AND session_id IS NOT NULL ORDER BY started_at DESC LIMIT 1`),
     latestCwdInThread: db.prepare(`SELECT cwd FROM tasks WHERE root_id = ? AND cwd IS NOT NULL ORDER BY started_at DESC LIMIT 1`),
+    latestRunnerInThread: db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`),
     closeThread: db.prepare(`UPDATE tasks SET closed_at = ? WHERE id = ? OR root_id = ?`),
     setThreadPr: db.prepare(`UPDATE tasks SET pr_url = ?, branch = ? WHERE id = ?`),
     countDone: db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE closed_at IS NOT NULL AND parent_id IS NULL`),
@@ -97,6 +97,16 @@ export function createDatabase(dbPath, runtime) {
     getBySlackId: db.prepare(`SELECT * FROM users WHERE slack_user_id = ?`),
     all: db.prepare(`SELECT * FROM users ORDER BY updated_at DESC`),
   };
+
+  /**
+   * Resolve the runner for a thread. Checks the given task first, then searches the thread.
+   * @param {object|null} task - Task row (may have .runner)
+   * @param {string} rootId - Thread root ID
+   * @returns {string|null} Runner name or null if not found
+   */
+  function resolveThreadRunner(task, rootId) {
+    return task?.runner || stmts.latestRunnerInThread.get(rootId)?.runner || null;
+  }
 
   function taskToJson(row, opts) {
     if (!row) return null;
@@ -121,5 +131,5 @@ export function createDatabase(dbPath, runtime) {
     return json;
   }
 
-  return { db, stmts, userStmts, taskToJson };
+  return { db, stmts, userStmts, taskToJson, resolveThreadRunner };
 }

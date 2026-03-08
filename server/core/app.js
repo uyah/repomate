@@ -35,7 +35,7 @@ export async function createApp(config) {
   });
 
   // --- Initialize database first, then worktree manager (needs db for closeThread) ---
-  const { db, stmts, userStmts, taskToJson } = createDatabase(config.dbPath, {
+  const { db, stmts, userStmts, taskToJson, resolveThreadRunner } = createDatabase(config.dbPath, {
     getRunningPids: () => runner.runningPids,
     getLiveOutputs: () => runner.liveOutputs,
     getWorktreeChanges: (cwd) => worktrees.getWorktreeChanges(cwd),
@@ -93,7 +93,7 @@ export async function createApp(config) {
 
   // --- Register core routes ---
   const routeCtx = {
-    db, stmts, userStmts, taskToJson, runner, worktrees,
+    db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees,
     config: { uploadsDir, maxTurns, repoDir, devServer: config.devServer || null },
     getCfUser: cfUserHelper,
   };
