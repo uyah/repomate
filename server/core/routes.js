@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { execSync, spawn } from "child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join, extname } from "path";
 
 /**
@@ -508,6 +508,18 @@ export function registerRoutes(app, ctx) {
     const result = stmts.deleteAfter.run(rootId, task.id, task.id);
     // Clear session so next reply starts fresh (avoids stale images/context in session history)
     stmts.clearThreadSession.run(rootId, rootId);
+    // Delete Claude session files from disk (prevents auto-resume of old conversation with stale images)
+    const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd;
+    if (cwd) {
+      try {
+        const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+        const sessionDir = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug);
+        if (existsSync(sessionDir)) {
+          rmSync(sessionDir, { recursive: true, force: true });
+          console.log(`[rollback] Deleted session dir: ${sessionDir}`);
+        }
+      } catch (e) { console.error(`[rollback] Failed to delete session dir: ${e.message}`); }
+    }
     console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies), session cleared`);
     return c.json({ status: "rolled_back", targetId: task.id, deleted: result.changes });
   });
