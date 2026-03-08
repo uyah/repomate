@@ -82,10 +82,20 @@ export function createWorktreeManager(config) {
   function getWorktreeChanges(cwd) {
     if (!cwd || !existsSync(cwd)) return null;
     try {
+      // Uncommitted changes
       const status = execSync("git status --porcelain", { cwd, encoding: "utf-8" }).trim();
-      if (!status) return null;
-      const files = status.split("\n").map(l => l.trim()).filter(Boolean);
-      return { files, summary: `${files.length} file(s) changed` };
+      const uncommittedFiles = status ? status.split("\n").map(l => l.trim()).filter(Boolean) : [];
+
+      // Commits ahead of origin/main
+      let commitsAhead = 0;
+      try {
+        execSync("git fetch origin main --quiet", { cwd, stdio: "pipe", timeout: 10000 });
+        const log = execSync("git log origin/main..HEAD --oneline", { cwd, encoding: "utf-8" }).trim();
+        commitsAhead = log ? log.split("\n").length : 0;
+      } catch {}
+
+      if (uncommittedFiles.length === 0 && commitsAhead === 0) return null;
+      return { uncommittedFiles, commitsAhead };
     } catch { return null; }
   }
 

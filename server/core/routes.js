@@ -11,7 +11,7 @@ import { join, extname } from "path";
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, config, getCfUser } = ctx;
   const { runTask, cancelTask, runningPids, liveOutputs } = runner;
-  const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
+  const { createWorktree, removeWorktree, getWorktreeChanges, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
 
@@ -357,8 +357,8 @@ export function registerRoutes(app, ctx) {
     return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId, runner: taskRunner }, 202);
   });
 
-  // --- Merge worktree ---
-  app.post("/task/:id/merge", async (c) => {
+  // --- Commit & push (for adding uncommitted changes to existing PR branch) ---
+  app.post("/task/:id/commit-push", async (c) => {
     const task = stmts.get.get(c.req.param("id"));
     if (!task) return c.json({ error: "not found" }, 404);
 
@@ -366,17 +366,18 @@ export function registerRoutes(app, ctx) {
     const cwd = task.cwd || rootTask?.cwd;
     if (!cwd) return c.json({ error: "no worktree for this task" }, 400);
 
-    const changes = getWorktreeChanges(cwd);
-    if (!changes) return c.json({ error: "no changes to merge" }, 400);
-
-    const message = `task(${task.root_id || task.id}): ${task.prompt.slice(0, 60)}`;
     const rootId = task.root_id || task.id;
-    const result = commitAndMergeToMain(cwd, rootId, message);
-    if (result.ok) {
-      closeThread(rootId);
-      return c.json({ status: "merged", commit: result.commit });
-    }
-    return c.json({ error: `merge failed: ${result.error}` }, 500);
+    const sessionId = stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    const taskRunner = resolveThreadRunner(rootTask, rootId) || resolveThreadRunner(task, rootId);
+    if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
+
+    const commitTaskId = `cp-${rootId}-${Date.now()}`;
+    const prompt = `未コミットの変更をコミットしてプッシュしてください。git status で変更を確認し、適切なコミットメッセージでコミットし、git push してください。`;
+
+    insertTask(commitTaskId, prompt, { cwd, sessionId, parentId: rootId, rootId, runner: taskRunner });
+    runTask(commitTaskId, prompt, 15, sessionId, cwd, taskRunner);
+
+    return c.json({ status: "commit_pushing", taskId: commitTaskId });
   });
 
   // --- Create PR ---

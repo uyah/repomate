@@ -804,15 +804,24 @@ function renderDetail(t) {
   }
   const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
   if (!hasRunning && !t.closedAt) {
+    const wc = t.worktreeChanges;
+    const hasUncommitted = wc && wc.uncommittedFiles && wc.uncommittedFiles.length > 0;
+    const hasCommits = wc && wc.commitsAhead > 0;
+
     if (t.prUrl) {
+      // PR exists
       actionsHtml += `<div class="wt-changes">
         <a href="${esc(t.prUrl)}" target="_blank" class="wt-btn" style="background:#1a2a3a;color:#60a5fa;text-decoration:none">PR を見る ↗</a>
+        ${hasUncommitted ? `<button class="wt-btn wt-merge" onclick="commitPush('${lastTaskId}')">コミット&プッシュ</button>` : ''}
         <button class="wt-btn wt-done" onclick="closeThreadUI('${lastTaskId}', this)">Done</button>
       </div>`;
-    } else if (t.worktreeChanges) {
+    } else if (hasUncommitted || hasCommits) {
+      // No PR yet, but has changes
+      const summary = [];
+      if (hasUncommitted) summary.push(`${wc.uncommittedFiles.length}ファイル未コミット`);
+      if (hasCommits) summary.push(`${wc.commitsAhead}コミット`);
       actionsHtml += `<div class="wt-changes">
-        <div class="wt-changes-summary">${t.worktreeChanges.files.length}ファイル変更あり</div>
-        <button class="wt-btn wt-merge" onclick="mergeTask('${lastTaskId}')">mainにマージ</button>
+        <div class="wt-changes-summary">${summary.join(' + ')}</div>
         <button class="wt-btn wt-pr" onclick="createPr('${lastTaskId}')">PR作成</button>
         <button class="wt-btn wt-discard" onclick="discardChanges('${lastTaskId}')">破棄</button>
       </div>`;
@@ -1311,20 +1320,16 @@ async function cancelTask(taskId) {
   } catch (e) { alert('キャンセル失敗: ' + e.message); }
 }
 
-async function mergeTask(taskId) {
-  if (!confirm('mainにマージしますか？')) return;
+async function commitPush(taskId) {
   const btn = document.querySelector('.wt-merge');
-  const origText = btn ? btn.textContent : '';
   try {
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> マージ中...'; }
-    const res = await fetch(API + '/task/' + taskId + '/merge', { method: 'POST' });
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> コミット&プッシュ中...'; }
+    const res = await fetch(API + '/task/' + taskId + '/commit-push', { method: 'POST' });
     const data = await res.json();
-    if (!res.ok) { alert(data.error || 'マージ失敗'); return; }
-    alert('マージ完了: ' + (data.commit || '').slice(0, 7));
-    closeDetail();
+    if (!res.ok) { alert(data.error || 'コミット&プッシュ失敗'); return; }
     refresh();
-  } catch (e) { alert('マージ失敗: ' + e.message); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
+  } catch (e) { alert('コミット&プッシュ失敗: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'コミット&プッシュ'; } }
 }
 
 async function createPr(taskId) {
