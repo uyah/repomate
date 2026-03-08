@@ -990,8 +990,8 @@ function renderDetail(t) {
   if (!t.closedAt) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
-    // Inherit runner from thread (last task with a runner, or root)
-    const threadRunner = last.runner || t.runner || 'claude';
+    // Root task's runner is the source of truth for the thread
+    const threadRunner = t.runner || last.runner || 'claude';
     replyEl.dataset.runner = threadRunner;
     if (runningId) {
       // Running: show cancel button, disable input
