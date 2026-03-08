@@ -392,9 +392,10 @@ export function createClaudeRunner(config) {
     console.log(`[startup] Found ${staleTasks.length} interrupted task(s) from previous run`);
     for (const task of staleTasks) {
       if (task.session_id) {
-        console.log(`[startup] Resuming task ${task.id} (session: ${task.session_id})`);
+        const taskRunner = task.runner || "claude";
+        console.log(`[startup] Resuming task ${task.id} (session: ${task.session_id}, runner: ${taskRunner})`);
         const prompt = "続けてください (auto-resumed after server restart)";
-        runClaude(task.id, prompt, maxTurns, task.session_id, task.cwd || repoDir);
+        runTask(task.id, prompt, maxTurns, task.session_id, task.cwd || repoDir, taskRunner);
       } else {
         console.log(`[startup] Marking task ${task.id} as interrupted (no session_id)`);
         stmts.update.run("interrupted", new Date().toISOString(), null, "server restarted", null, null, task.id);

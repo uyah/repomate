@@ -343,14 +343,18 @@ export function registerRoutes(app, ctx) {
     // Resume session if available (check whole thread), otherwise re-run the prompt
     const sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
+    const retryRunner = original.runner
+      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
+    if (!retryRunner) return c.json({ error: "runner not detected in thread" }, 400);
     const id = randomUUID().slice(0, 8);
     const prompt = original.prompt;
 
     const user = getCfUser(c);
     stmts.insert.run(id, `[retry] ${prompt}`, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, original.slack_thread_key || null, user);
-    runClaude(id, prompt, MAX_TURNS, sessionId, cwd);
+    stmts.updateRunner.run(retryRunner, id);
+    runTask(id, prompt, MAX_TURNS, sessionId, cwd, retryRunner);
 
-    return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId }, 202);
+    return c.json({ id, status: "accepted", retrying: original.id, resuming: sessionId, runner: retryRunner }, 202);
   });
 
   // --- Merge worktree ---
@@ -398,8 +402,10 @@ export function registerRoutes(app, ctx) {
     const callbackUrl = `http://localhost:${port}/internal/pr-callback/${rootId}`;
     const prompt = `この作業の変更をPRにしてください。git diff で差分を確認し、適切なコミットメッセージでコミットし、gh pr create でPRを作成してください。`;
 
-    // Use same runner as the original task (detect from root or thread tasks)
-    const rootRunner = rootTask?.runner || task.runner || "claude";
+    // Use same runner as the original task (detect from root or thread tasks, no fallback)
+    const rootRunner = rootTask?.runner || task.runner
+      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
+    if (!rootRunner) return c.json({ error: "runner not detected in thread. Cannot create PR." }, 400);
 
     stmts.insert.run(prTaskId, prompt, new Date().toISOString(), callbackUrl, cwd, sessionId, rootId, rootId, null, null);
     stmts.updateRunner.run(rootRunner, prTaskId);
@@ -443,13 +449,18 @@ export function registerRoutes(app, ctx) {
     const sessionId = task.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     if (!sessionId) return c.json({ error: "no session to compact" }, 400);
 
+    const compactRunner = task.runner
+      || db.prepare(`SELECT runner FROM tasks WHERE root_id = ? AND runner IS NOT NULL ORDER BY started_at DESC LIMIT 1`).get(rootId)?.runner;
+    if (!compactRunner) return c.json({ error: "runner not detected in thread" }, 400);
+
     const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const id = randomUUID().slice(0, 8);
     const user = getCfUser(c);
     stmts.insert.run(id, "[compact] コンテキスト圧縮", new Date().toISOString(), null, cwd, sessionId, task.id, rootId, null, user);
-    runClaude(id, "/compact", MAX_TURNS, sessionId, cwd);
+    stmts.updateRunner.run(compactRunner, id);
+    runTask(id, "/compact", MAX_TURNS, sessionId, cwd, compactRunner);
 
-    return c.json({ id, status: "accepted", compacting: sessionId }, 202);
+    return c.json({ id, status: "accepted", compacting: sessionId, runner: compactRunner }, 202);
   });
 
   // --- Close thread (manual done, no changes) ---
