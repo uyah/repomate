@@ -66,6 +66,21 @@ export async function createApp(config) {
       const host = c.req.header("host") || "";
       if (!host.endsWith(`.${baseDomain}`)) return next();
       const subdomain = host.replace(`.${baseDomain}`, "");
+      const origin = c.req.header("origin") || `https://${host}`;
+
+      // Handle CORS preflight
+      if (c.req.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+            "Access-Control-Allow-Headers": c.req.header("access-control-request-headers") || "*",
+            "Access-Control-Max-Age": "86400",
+          },
+        });
+      }
+
       const server = worktrees.getDevServerBySubdomain(subdomain);
       if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
       // Re-encode path segments (Hono/URL decodes %5B→[ which breaks Turbopack asset paths)
@@ -83,9 +98,11 @@ export async function createApp(config) {
           redirect: "manual",
           ...(hasBody ? { duplex: "half" } : {}),
         });
+        const headers = new Headers(resp.headers);
+        headers.set("Access-Control-Allow-Origin", origin);
         return new Response(resp.body, {
           status: resp.status,
-          headers: resp.headers,
+          headers,
         });
       } catch {
         return c.text("Bad gateway", 502);
