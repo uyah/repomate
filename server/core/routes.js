@@ -27,6 +27,26 @@ export function registerRoutes(app, ctx) {
     });
   });
 
+  // --- Available models (cached, fetched from CLIs at startup) ---
+  let cachedModels = null;
+  function fetchAvailableModels() {
+    const models = { claude: [], codex: [] };
+    // Claude: parse `claude models` output
+    try {
+      const out = execSync("claude models 2>/dev/null", { encoding: "utf-8", timeout: 10000 });
+      const matches = out.match(/`(claude-[a-z0-9-]+)`/g);
+      if (matches) models.claude = matches.map(m => m.replace(/`/g, ""));
+    } catch {}
+    // Codex: no non-interactive model list command available
+    // Use the list from `codex /model` (interactive only)
+    models.codex = ["gpt-5.3-codex", "gpt-5.4", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.1-codex-mini"];
+    return models;
+  }
+  app.get("/config/models", (c) => {
+    if (!cachedModels) cachedModels = fetchAvailableModels();
+    return c.json(cachedModels);
+  });
+
   // --- File upload ---
   app.post("/upload", async (c) => {
     const contentType = c.req.header("content-type") || "";

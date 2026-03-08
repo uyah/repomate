@@ -1184,17 +1184,21 @@ function toggleBranchInput() {
   if (row.style.display !== 'none') document.getElementById('branchInput').focus();
 }
 
-const MODEL_OPTIONS = {
-  claude: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
-  codex: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5-codex', 'o3'],
-};
+let MODEL_OPTIONS = { claude: [], codex: [] };
+async function loadModels() {
+  try {
+    const res = await fetch(API + '/config/models');
+    if (res.ok) MODEL_OPTIONS = await res.json();
+  } catch {}
+  updateModelSelect();
+}
 function updateModelSelect() {
   const runner = document.getElementById('runnerSelect').value;
   const sel = document.getElementById('modelSelect');
   const models = MODEL_OPTIONS[runner] || [];
   sel.innerHTML = '<option value="">default</option>' + models.map(m => `<option value="${m}">${m}</option>`).join('');
 }
-updateModelSelect();
+loadModels();
 
 // === Send new task ===
 let sending = false;
