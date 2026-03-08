@@ -74,7 +74,7 @@ export function createClaudeRunner(config) {
 
   // ─── Claude Code runner (Agent SDK) ───
 
-  function runClaude(taskId, prompt, turns, sessionId, cwd) {
+  function runClaude(taskId, prompt, turns, sessionId, cwd, opts = {}) {
     const abortController = new AbortController();
     runningTasks.set(taskId, abortController);
     runningPids.set(taskId, process.pid);
@@ -93,6 +93,7 @@ export function createClaudeRunner(config) {
       tools: { type: "preset", preset: "claude_code" },
       settingSources: ["user", "project"],
     };
+    if (opts.model) sdkOptions.model = opts.model;
     if (sessionId) sdkOptions.resume = sessionId;
 
     (async () => {
@@ -194,13 +195,14 @@ export function createClaudeRunner(config) {
 
   // ─── Codex runner (CLI exec --json) ───
 
-  function runCodex(taskId, prompt, turns, sessionId, cwd) {
+  function runCodex(taskId, prompt, turns, sessionId, cwd, opts = {}) {
     const abortController = new AbortController();
     runningTasks.set(taskId, abortController);
     runningPids.set(taskId, process.pid);
     const liveData = setupLiveData(taskId);
 
-    liveData.events.push({ type: "system", subtype: "init", model: "codex", runner: "codex", tools: [] });
+    const codexModel = opts.model || null;
+    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", tools: [] });
 
     (async () => {
       let lastResultText = "";
@@ -208,6 +210,7 @@ export function createClaudeRunner(config) {
 
       try {
         const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
+        if (codexModel) args.push("-m", codexModel);
         if (cwd || repoDir) args.push("--cd", cwd || repoDir);
         args.push(prompt);
 
@@ -333,14 +336,14 @@ export function createClaudeRunner(config) {
 
   const VALID_RUNNERS = ["claude", "codex"];
 
-  function runTask(taskId, prompt, turns, sessionId, cwd, runner) {
+  function runTask(taskId, prompt, turns, sessionId, cwd, runner, opts = {}) {
     if (!runner || !VALID_RUNNERS.includes(runner)) {
       throw new Error(`Invalid runner: ${JSON.stringify(runner)}. Must be one of: ${VALID_RUNNERS.join(", ")}`);
     }
     if (runner === "codex") {
-      runCodex(taskId, prompt, turns, sessionId, cwd);
+      runCodex(taskId, prompt, turns, sessionId, cwd, opts);
     } else {
-      runClaude(taskId, prompt, turns, sessionId, cwd);
+      runClaude(taskId, prompt, turns, sessionId, cwd, opts);
     }
   }
 

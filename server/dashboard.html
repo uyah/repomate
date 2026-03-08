@@ -362,9 +362,12 @@
       </div>
       <div class="input-row">
         <input id="promptInput" type="text" placeholder="新しいタスク..." autocomplete="off">
-        <select id="runnerSelect" title="ランナー選択" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+        <select id="runnerSelect" title="ランナー選択" onchange="updateModelSelect()" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
+        </select>
+        <select id="modelSelect" title="モデル選択" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+          <option value="">default</option>
         </select>
         <button id="sendBtn" onclick="sendTask()">送信</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
@@ -541,8 +544,7 @@ function renderEvents(events) {
       </div>`;
     } else if (g.type === 'system') {
       if (g.subtype === 'init') {
-        const modelLabel = g.model === 'codex' ? 'Codex CLI' : g.model;
-        html += `<div class="evt-system">model: ${esc(modelLabel || '?')}</div>`;
+        html += `<div class="evt-system">model: ${esc(g.model || '?')}</div>`;
       } else if (g.subtype === 'compact_boundary') {
         html += `<div class="evt-system"><span class="compact-badge">compact</span> ${g.pre_tokens ? g.pre_tokens.toLocaleString() + ' tokens' : ''}</div>`;
       }
@@ -688,7 +690,7 @@ function renderThreadItem(t) {
 function getRunnerName(t) {
   const initEvt = (t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
   if (!initEvt) return '(unknown)';
-  if (initEvt.runner === 'codex' || initEvt.model === 'codex') return 'CODEX';
+  if (initEvt.runner === 'codex') return 'CODEX';
   return 'CLAUDE';
 }
 
@@ -1182,6 +1184,18 @@ function toggleBranchInput() {
   if (row.style.display !== 'none') document.getElementById('branchInput').focus();
 }
 
+const MODEL_OPTIONS = {
+  claude: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+  codex: ['gpt-5.4', 'gpt-5.2-codex', 'o3'],
+};
+function updateModelSelect() {
+  const runner = document.getElementById('runnerSelect').value;
+  const sel = document.getElementById('modelSelect');
+  const models = MODEL_OPTIONS[runner] || [];
+  sel.innerHTML = '<option value="">default</option>' + models.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+updateModelSelect();
+
 // === Send new task ===
 let sending = false;
 async function sendTask() {
@@ -1196,7 +1210,9 @@ async function sendTask() {
     const files = pendingFiles.map(f => f.name);
     const branch = branchInput.value.trim();
     const runner = document.getElementById('runnerSelect').value;
+    const model = document.getElementById('modelSelect').value;
     const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30, runner };
+    if (model) body.model = model;
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -1223,7 +1239,9 @@ async function sendDetailReply() {
   replyLock.active = true;
   try {
     const runner = document.getElementById('runnerSelect').value;
+    const model = document.getElementById('modelSelect').value;
     const body = { prompt: prompt || '添付ファイルを確認してください', runner };
+    if (model) body.model = model;
     if (files.length > 0) body.files = files;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = '';

@@ -74,7 +74,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch, runner: runnerType } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -102,7 +102,7 @@ export function registerRoutes(app, ctx) {
     const now = new Date().toISOString();
     stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
     if (branch) stmts.setThreadPr.run(null, branch, id);
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType);
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model });
 
     return c.json({ id, status: "accepted" }, 202);
   });
@@ -197,7 +197,7 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const { prompt, maxTurns, files, runner: runnerType } = await c.req.json();
+    const { prompt, maxTurns, files, runner: runnerType, model } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -218,7 +218,7 @@ export function registerRoutes(app, ctx) {
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
     stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType);
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
   });
