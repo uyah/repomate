@@ -207,7 +207,7 @@ export function createClaudeRunner(config) {
       let lastErrorText = "";
 
       try {
-        const args = ["exec", "--json", "--full-auto"];
+        const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
         if (cwd || repoDir) args.push("--cd", cwd || repoDir);
         args.push(prompt);
 
@@ -223,7 +223,11 @@ export function createClaudeRunner(config) {
         });
 
         let stderrBuf = "";
-        child.stderr.on("data", (chunk) => { stderrBuf += chunk.toString(); });
+        child.stderr.on("data", (chunk) => {
+          const text = chunk.toString();
+          stderrBuf += text;
+          console.error(`[${taskId}] codex stderr: ${text.trim()}`);
+        });
 
         // Parse JSONL stream
         let lineBuf = "";
@@ -268,38 +272,58 @@ export function createClaudeRunner(config) {
   }
 
   function handleCodexEvent(evt, liveData, setResult) {
-    // Codex JSONL events: https://developers.openai.com/codex/cli/reference/
+    // Codex JSONL events: thread.started, turn.started, item.started, item.completed, turn.completed
     switch (evt.type) {
-      case "message": {
-        if (evt.role === "assistant" && evt.content) {
-          const text = typeof evt.content === "string" ? evt.content : evt.content.map(b => b.text || "").join("");
-          if (text) {
-            setResult(text);
-            liveData.events.push({ type: "text", text });
-            liveData.lastText = text;
+      case "item.completed": {
+        const item = evt.item;
+        if (!item) break;
+        if (item.type === "agent_message" && item.text) {
+          setResult(item.text);
+          liveData.events.push({ type: "text", text: item.text });
+          liveData.lastText = item.text;
+        } else if (item.type === "command_execution") {
+          liveData.events.push({
+            type: "tool_use",
+            name: "Bash",
+            input: { command: item.command || "" },
+            tool_use_id: item.id || "",
+          });
+          if (item.aggregated_output || item.exit_code != null) {
+            liveData.events.push({
+              type: "tool_result",
+              tool_use_id: item.id || "",
+              content: (item.aggregated_output || "").slice(0, 2000),
+              is_error: item.exit_code !== 0,
+            });
           }
+        } else if (item.type === "file_edit") {
+          liveData.events.push({
+            type: "tool_use",
+            name: "Edit",
+            input: { file_path: item.file_path || "", diff: item.diff || "" },
+            tool_use_id: item.id || "",
+          });
         }
         break;
       }
-      case "function_call":
-      case "tool_call": {
-        liveData.events.push({
-          type: "tool_use",
-          name: evt.name || evt.function?.name || "unknown",
-          input: evt.arguments || evt.function?.arguments || {},
-          tool_use_id: evt.id || evt.call_id || "",
-        });
+      case "turn.completed": {
+        if (evt.usage) {
+          liveData.events.push({
+            type: "result_meta",
+            cost_usd: null,
+            num_turns: null,
+            duration_ms: null,
+            input_tokens: evt.usage.input_tokens,
+            output_tokens: evt.usage.output_tokens,
+            cached_input_tokens: evt.usage.cached_input_tokens,
+          });
+        }
         break;
       }
-      case "function_call_output":
-      case "tool_call_output": {
-        const text = typeof evt.output === "string" ? evt.output : JSON.stringify(evt.output || "");
-        liveData.events.push({
-          type: "tool_result",
-          tool_use_id: evt.call_id || evt.id || "",
-          content: text.slice(0, 2000),
-          is_error: false,
-        });
+      case "thread.started": {
+        // Update init event with thread_id
+        const initEvt = liveData.events.find(e => e.type === "system" && e.subtype === "init");
+        if (initEvt) initEvt.threadId = evt.thread_id;
         break;
       }
     }
