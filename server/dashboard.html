@@ -290,6 +290,7 @@
 
   /* Cost display */
   .cost-badge { color: #666; font-size: 0.65rem; font-family: monospace; margin-left: 4px; }
+  .runner-badge { font-size: 0.6rem; color: #888; background: #1a1a1a; padding: 1px 5px; border-radius: 3px; font-family: monospace; }
 
   /* Result meta bar (cost, tokens, turns) */
   .evt-result-meta {
@@ -666,6 +667,16 @@ function getThreadTime(t) {
   return t.completedAt || t.startedAt;
 }
 
+function getThreadRunnerLabel(t) {
+  // Try root task's events first, then fallback to runner field
+  const initEvt = (t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
+  const runner = initEvt?.runner || t.runner;
+  if (!runner) return '';
+  const name = runner === 'codex' ? 'Codex' : 'Claude';
+  const model = initEvt?.model && initEvt.model !== '(default)' ? initEvt.model.replace(/^claude-/, '').replace(/^gpt-/, '') : '';
+  return model ? `${name} ${model}` : name;
+}
+
 function renderThreadItem(t) {
   const status = getThreadStatus(t);
   const time = getThreadTime(t);
@@ -674,6 +685,7 @@ function renderThreadItem(t) {
   const replyCount = t.replies?.length || 0;
   const active = t.id === selectedThreadId ? ' active' : '';
   const closed = t.closedAt ? ' closed' : '';
+  const runnerLabel = getThreadRunnerLabel(t);
 
   // Calculate total cost for thread
   const allCosts = [t.costUsd, ...(t.replies || []).map(r => r.costUsd)].filter(c => c != null);
@@ -687,6 +699,7 @@ function renderThreadItem(t) {
     ${t.branch ? `<div style="font-size:0.6rem;color:#60a5fa;margin-bottom:2px">🌿 ${esc(t.branch)}</div>` : ''}
     <div class="thread-item-prompt">${esc(prompt)}</div>
     <div class="thread-item-footer">
+      ${runnerLabel ? `<span class="runner-badge">${esc(runnerLabel)}</span>` : ''}
       <span class="badge badge-${status}">${status === 'waiting' ? '返信待ち' : status === 'pr' ? 'PR' : status}</span>
       ${replyCount > 0 ? `<span class="thread-item-replies">${replyCount} replies</span>` : ''}
       ${totalCost ? `<span class="cost-badge">$${totalCost.toFixed(3)}</span>` : ''}
