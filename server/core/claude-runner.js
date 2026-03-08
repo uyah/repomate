@@ -216,8 +216,11 @@ export function createClaudeRunner(config) {
           args.push("resume", sessionId);
         }
         args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
-        if (codexModel) args.push("-m", codexModel);
-        if (cwd || repoDir) args.push("--cd", cwd || repoDir);
+        if (!sessionId) {
+          // --cd and -m are only valid for new sessions, not resume
+          if (codexModel) args.push("-m", codexModel);
+          if (cwd || repoDir) args.push("--cd", cwd || repoDir);
+        }
         args.push(prompt);
 
         const env = { ...process.env, ...getGhToken(), PATH: `/opt/homebrew/bin:${process.env.PATH}` };
