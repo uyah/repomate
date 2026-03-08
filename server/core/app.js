@@ -68,8 +68,12 @@ export async function createApp(config) {
       const subdomain = host.replace(`.${baseDomain}`, "");
       const server = worktrees.getDevServerBySubdomain(subdomain);
       if (!server) return c.text(`Dev server '${subdomain}' not found`, 404);
+      // Re-encode path segments (Hono/URL decodes %5B→[ which breaks Turbopack asset paths)
       const url = new URL(c.req.url);
-      const target = `http://localhost:${server.port}${url.pathname}${url.search}`;
+      const encodedPath = url.pathname.split("/").map(s =>
+        s.replace(/[^a-zA-Z0-9._~!$&'()*+,;=:@%-]/g, (ch) => encodeURIComponent(ch))
+      ).join("/");
+      const target = `http://localhost:${server.port}${encodedPath}${url.search}`;
       const hasBody = c.req.method !== "GET" && c.req.method !== "HEAD";
       try {
         const resp = await fetch(target, {
