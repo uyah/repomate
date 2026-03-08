@@ -1,5 +1,5 @@
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, readdirSync, copyFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 /**
@@ -12,6 +12,7 @@ import { join } from "path";
  */
 export function createWorktreeManager(config) {
   const { repoDir, stmts: dbStmts } = config;
+  const serverPort = config.serverPort || 8080;
   const devServerConfig = config.devServer || null;
   const devServerProcs = new Map(); // taskId → ChildProcess
   const devServerLogs = new Map(); // taskId → string[] (last N lines)
@@ -44,6 +45,20 @@ export function createWorktreeManager(config) {
         for (const f of envFiles) {
           copyFileSync(join(repoDir, f), join(worktreePath, f));
         }
+      } catch {}
+      // Write task context + agent instructions for PR linking
+      try {
+        const serverUrl = `http://localhost:${serverPort}`;
+        const linkCmd = `curl -s -X POST ${serverUrl}/task/${taskId}/link-pr -H 'Content-Type: application/json' -d '{"prUrl":"<PR_URL>"}'`;
+        writeFileSync(join(worktreePath, ".mac-mini-task.json"), JSON.stringify({
+          taskId,
+          serverUrl,
+          linkPr: {
+            description: "PRを作成したら、このコマンドでダッシュボードに紐づけてください",
+            command: linkCmd,
+          },
+        }, null, 2) + "\n");
+
       } catch {}
       console.log(`[worktree] Created ${worktreePath}`);
       return worktreePath;

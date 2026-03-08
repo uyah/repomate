@@ -46,6 +46,7 @@ export async function createApp(config) {
     worktreeBase: config.worktreeBase,
     stmts,
     devServer: config.devServer || null,
+    serverPort: config.port || 8080,
   });
 
   // --- Initialize Claude runner ---

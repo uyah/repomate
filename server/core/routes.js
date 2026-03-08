@@ -423,6 +423,20 @@ export function registerRoutes(app, ctx) {
     return c.json({ ok: true });
   });
 
+  // --- Link PR to thread (called by agents via curl) ---
+  app.post("/task/:rootId/link-pr", async (c) => {
+    const rootId = c.req.param("rootId");
+    const { prUrl, branch } = await c.req.json();
+    if (!prUrl) return c.json({ error: "prUrl is required" }, 400);
+
+    const task = stmts.get.get(rootId);
+    if (!task) return c.json({ error: "thread not found" }, 404);
+
+    stmts.setThreadPr.run(prUrl, branch || null, rootId);
+    console.log(`[link-pr] Agent linked PR ${prUrl} to thread ${rootId}`);
+    return c.json({ status: "linked", prUrl, rootId });
+  });
+
   // --- Discard changes ---
   app.post("/task/:id/discard", (c) => {
     const task = stmts.get.get(c.req.param("id"));

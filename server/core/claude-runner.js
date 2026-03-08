@@ -1,5 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "child_process";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 
 /**
  * Create a multi-runner (Claude Code + Codex) task executor.
@@ -58,35 +60,6 @@ export function createClaudeRunner(config) {
       stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
     }
 
-    // Auto-detect PR URLs from result or events and link to thread
-    detectAndLinkPr(taskId, lastResultText, liveData.events);
-  }
-
-  function detectAndLinkPr(taskId, resultText, events) {
-    const task = stmts.get.get(taskId);
-    if (!task) return;
-    const rootId = task.root_id || task.id;
-
-    // Skip if thread already has a PR linked
-    const rootTask = rootId !== taskId ? stmts.get.get(rootId) : task;
-    if (rootTask?.pr_url) return;
-
-    // Search result text and all text events for PR URL
-    const searchTexts = [resultText || ""];
-    for (const evt of events) {
-      if (evt.type === "text" && evt.text) searchTexts.push(evt.text);
-      if (evt.type === "tool_result" && evt.content) searchTexts.push(evt.content);
-    }
-
-    for (const text of searchTexts) {
-      const prMatch = text.match(/https:\/\/github\.com\/[^\s)>\]]+\/pull\/\d+/);
-      if (prMatch) {
-        const branchMatch = text.match(/task\/[a-z0-9-]+|test\/[a-z0-9_-]+|fix\/[a-z0-9_-]+|feat\/[a-z0-9_-]+/i);
-        stmts.setThreadPr.run(prMatch[0], branchMatch?.[0] || null, rootId);
-        console.log(`[pr-detect] Linked PR ${prMatch[0]} to thread ${rootId}`);
-        return;
-      }
-    }
   }
 
   async function sendCallback(taskId) {
@@ -381,14 +354,31 @@ export function createClaudeRunner(config) {
 
   // ─── Unified dispatch (the ONLY way to run tasks) ───
 
+  /**
+   * Read .mac-mini-task.json from worktree and append PR linking instruction to prompt.
+   * Only appends on first message (no sessionId = new conversation).
+   */
+  function enrichPrompt(prompt, sessionId, cwd) {
+    if (sessionId) return prompt; // resume — don't re-inject
+    if (!cwd) return prompt;
+    try {
+      const taskFile = join(cwd, ".mac-mini-task.json");
+      if (!existsSync(taskFile)) return prompt;
+      const ctx = JSON.parse(readFileSync(taskFile, "utf-8"));
+      if (!ctx.linkPr?.command) return prompt;
+      return prompt + `\n\n---\n[mac-mini-automation] PRを作成した場合は、以下のコマンドでダッシュボードに紐づけてください:\n${ctx.linkPr.command}\n<PR_URL> を実際のURLに置換すること。`;
+    } catch { return prompt; }
+  }
+
   function runTask(taskId, prompt, turns, sessionId, cwd, runner, opts = {}) {
     if (!runner || !VALID_RUNNERS.includes(runner)) {
       throw new Error(`Invalid runner: ${JSON.stringify(runner)}. Must be one of: ${VALID_RUNNERS.join(", ")}`);
     }
+    const enrichedPrompt = enrichPrompt(prompt, sessionId, cwd);
     if (runner === "codex") {
-      _runCodex(taskId, prompt, turns, sessionId, cwd, opts);
+      _runCodex(taskId, enrichedPrompt, turns, sessionId, cwd, opts);
     } else {
-      _runClaude(taskId, prompt, turns, sessionId, cwd, opts);
+      _runClaude(taskId, enrichedPrompt, turns, sessionId, cwd, opts);
     }
   }
 
