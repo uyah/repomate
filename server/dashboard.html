@@ -184,6 +184,27 @@
   .time { font-size: 0.65rem; color: #555; }
   .stream-text { color: #888; font-style: italic; }
   .error-text { color: #f87171; }
+
+  /* Running indicator (Claude Code style) */
+  .running-indicator {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; margin: 8px 0 4px;
+    border-left: 2px solid #60a5fa;
+    color: #888; font-size: 0.8rem;
+  }
+  .running-dots { display: flex; gap: 3px; flex-shrink: 0; }
+  .running-dots span {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: #60a5fa; animation: dotPulse 1.4s infinite ease-in-out both;
+  }
+  .running-dots span:nth-child(1) { animation-delay: -0.32s; }
+  .running-dots span:nth-child(2) { animation-delay: -0.16s; }
+  @keyframes dotPulse {
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+  .running-label { color: #60a5fa; font-weight: 600; font-family: monospace; font-size: 0.75rem; }
+  .running-detail { color: #555; font-family: monospace; font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .retry-btn { background: #3a2a1a; color: #fbbf24; border: 1px solid #5a4a2a; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; margin-top: 6px; }
   .retry-btn:hover { background: #4a3a2a; }
 
@@ -490,6 +511,28 @@ function formatUser(createdBy) {
   return at > 0 ? createdBy.slice(0, at) : createdBy;
 }
 
+function getRunningActivity(events) {
+  if (!events || events.length === 0) return { label: 'thinking', detail: '' };
+  // Walk backwards to find last meaningful event
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === 'tool' && !e.result) return { label: e.name || 'tool', detail: e.input ? String(e.input).slice(0, 80) : '' };
+    if (e.type === 'tool' && e.result) return { label: e.name || 'tool', detail: 'done' };
+    if (e.type === 'thinking') return { label: 'thinking', detail: '' };
+    if (e.type === 'text') return { label: 'writing', detail: '' };
+  }
+  return { label: 'thinking', detail: '' };
+}
+
+function renderRunningIndicator(events) {
+  const { label, detail } = getRunningActivity(events);
+  return `<div class="running-indicator">
+    <div class="running-dots"><span></span><span></span><span></span></div>
+    <span class="running-label">${esc(label)}</span>
+    ${detail ? `<span class="running-detail">${esc(detail)}</span>` : ''}
+  </div>`;
+}
+
 // === Tool rendering ===
 let toolToggleId = 0;
 
@@ -759,7 +802,8 @@ function renderDetailMsg(t, isReply, isLast) {
   if (t.status === 'running') {
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
-      <div id="events-${t.id}">${t.events ? renderEvents(t.events) : '<div class="msg-text stream-text">考え中...</div>'}</div>
+      <div id="events-${t.id}">${t.events ? renderEvents(t.events) : ''}</div>
+      <div id="running-ind-${t.id}">${renderRunningIndicator(t.events)}</div>
     </div>`;
     startStream(t.id);
   } else if (t.events && t.events.length > 0) {
@@ -997,12 +1041,11 @@ function startStream(taskId) {
             const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 100;
             if (atBottom) body.scrollTop = body.scrollHeight;
           }
-        } else if (data.output) {
-          // Just update the streaming text at the end
-          const lastEvt = el.querySelector('.evt-text:last-child .md-content, .evt-text:last-child .msg-text');
-          if (lastEvt && data.output !== lastEvt.textContent) {
-            // Quick update — don't re-render all events
-          }
+        }
+        // Update running indicator
+        const indEl = document.getElementById('running-ind-' + taskId);
+        if (indEl && data.status === 'running') {
+          indEl.innerHTML = renderRunningIndicator(data.events);
         }
       } else if (data.output) {
         el.innerHTML = `<div class="evt-text">${renderMarkdown(data.output)}</div>`;
@@ -1012,6 +1055,9 @@ function startStream(taskId) {
         es.close();
         streams.delete(taskId);
         streamEventCounts.delete(taskId);
+        // Remove running indicator
+        const indEl = document.getElementById('running-ind-' + taskId);
+        if (indEl) indEl.remove();
         setTimeout(refresh, 500);
       }
     } catch {}
