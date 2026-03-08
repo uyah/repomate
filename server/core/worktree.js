@@ -128,7 +128,12 @@ curl -s -X POST ${API}/task/${taskId}/close
     try {
       // Uncommitted changes
       const status = execSync("git status --porcelain", { cwd, encoding: "utf-8", timeout: 5000 }).trim();
-      const uncommittedFiles = status ? status.split("\n").map(l => l.trim()).filter(Boolean) : [];
+      // Filter out repomate/claude internal files from change detection
+      const INTERNAL_FILES = [".repomate-task.json", "AGENTS.md", ".claude/CLAUDE.local.md"];
+      const uncommittedFiles = status
+        ? status.split("\n").map(l => l.trim()).filter(Boolean)
+            .filter(l => !INTERNAL_FILES.some(f => l.endsWith(f)))
+        : [];
 
       // Commits ahead of origin/main
       let commitsAhead = 0;
