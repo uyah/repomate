@@ -506,7 +506,9 @@ export function registerRoutes(app, ctx) {
 
     // Delete all replies that came after this task
     const result = stmts.deleteAfter.run(rootId, task.id, task.id);
-    console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies)`);
+    // Clear session so next reply starts fresh (avoids stale images/context in session history)
+    stmts.clearThreadSession.run(rootId, rootId);
+    console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies), session cleared`);
     return c.json({ status: "rolled_back", targetId: task.id, deleted: result.changes });
   });
 

@@ -114,6 +114,8 @@ export function createDatabase(dbPath, runtime) {
     devServerMaxPort: db.prepare(`SELECT MAX(port) as max_port FROM dev_servers`),
     // Rollback: delete all replies in a thread that came after a given task
     deleteAfter: db.prepare(`DELETE FROM tasks WHERE root_id = ? AND started_at > (SELECT started_at FROM tasks WHERE id = ?) AND id != ?`),
+    // Clear session_id for all tasks in a thread (forces new session on next reply)
+    clearThreadSession: db.prepare(`UPDATE tasks SET session_id = NULL WHERE id = ? OR root_id = ?`),
   };
 
   const userStmts = {
