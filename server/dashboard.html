@@ -1335,7 +1335,7 @@ async function commitPush(taskId) {
 async function createPr(taskId) {
   const btn = document.querySelector('.wt-pr');
   try {
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> Claude がPR作成中...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="dev-spinner"></span> PR作成中...'; }
     const res = await fetch(API + '/task/' + taskId + '/pr', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { alert(data.error || 'PR作成失敗'); return; }

@@ -95,7 +95,7 @@ export async function createApp(config) {
   // --- Register core routes ---
   const routeCtx = {
     db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees,
-    config: { uploadsDir, maxTurns, repoDir, devServer: config.devServer || null },
+    config: { uploadsDir, maxTurns, repoDir, port: config.port || 8080, devServer: config.devServer || null },
     getCfUser: cfUserHelper,
   };
   registerRoutes(app, routeCtx);
