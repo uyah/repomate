@@ -513,13 +513,28 @@ function formatUser(createdBy) {
 
 function getRunningActivity(events) {
   if (!events || events.length === 0) return { label: 'thinking', detail: '' };
-  // Walk backwards to find last meaningful event
+  // Walk backwards to find the current activity
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.type === 'tool' && !e.result) return { label: e.name || 'tool', detail: e.input ? String(e.input).slice(0, 80) : '' };
-    if (e.type === 'tool' && e.result) return { label: e.name || 'tool', detail: 'done' };
-    if (e.type === 'thinking') return { label: 'thinking', detail: '' };
-    if (e.type === 'text') return { label: 'writing', detail: '' };
+    if (e.type === 'tool_use') {
+      // Check if this tool_use has a result yet
+      const hasResult = events.slice(i + 1).some(r => r.type === 'tool_result' && r.tool_use_id === e.tool_use_id);
+      const summary = toolSummary(e.name, e.input);
+      if (!hasResult) {
+        return { label: e.name || 'tool', detail: summary };
+      }
+      // Tool finished — agent is now thinking about the result
+      return { label: 'thinking', detail: e.name + (summary ? ': ' + summary : '') + ' の結果を処理中' };
+    }
+    if (e.type === 'tool_result') continue; // skip, look for the tool_use
+    if (e.type === 'thinking') {
+      const preview = (e.text || '').replace(/\n/g, ' ').slice(0, 100);
+      return { label: 'thinking', detail: preview };
+    }
+    if (e.type === 'text') {
+      const preview = (e.text || '').replace(/\n/g, ' ').slice(-100);
+      return { label: 'writing', detail: preview };
+    }
   }
   return { label: 'thinking', detail: '' };
 }
