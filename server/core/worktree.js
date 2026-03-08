@@ -1,5 +1,5 @@
 import { execSync, spawn } from "child_process";
-import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, copyFileSync, writeFileSync, rmSync, readFileSync, appendFileSync } from "fs";
 import { join } from "path";
 
 /**
@@ -214,9 +214,12 @@ export function createWorktreeManager(config) {
     const MAX_LOG_LINES = 200;
     const logs = [];
     devServerLogs.set(taskId, logs);
+    const logFile = join(cwd, "dev-server.log");
+    try { writeFileSync(logFile, ""); } catch {} // truncate
     const appendLog = (line) => {
       logs.push(line);
       if (logs.length > MAX_LOG_LINES) logs.splice(0, logs.length - MAX_LOG_LINES);
+      try { appendFileSync(logFile, line + "\n"); } catch {}
     };
     proc.stdout?.on("data", (d) => {
       for (const line of d.toString().split("\n")) {
@@ -251,6 +254,7 @@ export function createWorktreeManager(config) {
       devServerProcs.delete(taskId);
     }
     dbStmts.devServerDelete.run(taskId);
+    // Keep logs — don't delete from devServerLogs
   }
 
   function getDevServers() {
@@ -262,7 +266,17 @@ export function createWorktreeManager(config) {
   }
 
   function getDevServerLogs(taskId) {
-    return devServerLogs.get(taskId) || [];
+    const mem = devServerLogs.get(taskId);
+    if (mem && mem.length > 0) return mem;
+    // Fallback: read from log file (survives server restart)
+    try {
+      const logFile = join(WORKTREES_DIR, `task-${taskId}`, "dev-server.log");
+      if (existsSync(logFile)) {
+        const lines = readFileSync(logFile, "utf-8").split("\n").filter(Boolean);
+        return lines.slice(-200);
+      }
+    } catch {}
+    return [];
   }
 
   function stopAllDevServers() {
@@ -272,7 +286,7 @@ export function createWorktreeManager(config) {
     }
     const count = devServerProcs.size;
     devServerProcs.clear();
-    devServerLogs.clear();
+    // Keep logs — don't clear devServerLogs
     if (count > 0) console.log(`[dev] Stopped ${count} dev server(s)`);
   }
 
