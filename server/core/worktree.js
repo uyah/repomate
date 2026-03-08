@@ -30,6 +30,56 @@ export function createWorktreeManager(config) {
     return {};
   }
 
+  function agentInstructions(taskId, serverUrl) {
+    const API = serverUrl;
+    return `# Mac Mini Automation
+
+このworktreeはmac-mini-automationのタスク \`${taskId}\` 用です。
+以下のAPIでautomationサーバーを操作できます。
+
+## Dev Server
+
+プレビュー用devサーバーを起動・管理できます。
+
+\`\`\`bash
+# 起動
+curl -s -X POST ${API}/task/${taskId}/dev-server
+
+# 停止
+curl -s -X DELETE ${API}/task/${taskId}/dev-server
+
+# ログ確認
+curl -s ${API}/task/${taskId}/dev-server/logs | jq '.lines[-20:]'
+\`\`\`
+
+## PR紐づけ
+
+PRを作成したら、ダッシュボードに紐づけてください:
+\`\`\`bash
+curl -s -X POST ${API}/task/${taskId}/link-pr \\
+  -H 'Content-Type: application/json' \\
+  -d '{"prUrl":"<実際のPR URL>"}'
+\`\`\`
+
+## タスク完了
+
+作業が完了したら明示的に閉じてください:
+\`\`\`bash
+curl -s -X POST ${API}/task/${taskId}/close
+\`\`\`
+`;
+  }
+
+  function writeAgentInstructions(worktreePath, taskId, serverUrl) {
+    const instructions = agentInstructions(taskId, serverUrl);
+    // Claude Code: .claude/CLAUDE.local.md (auto-loaded, untracked)
+    const claudeDir = join(worktreePath, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, "CLAUDE.local.md"), instructions);
+    // Codex: AGENTS.md (auto-loaded by Codex)
+    writeFileSync(join(worktreePath, "AGENTS.md"), instructions);
+  }
+
   function createWorktree(taskId, opts) {
     const worktreePath = join(WORKTREES_DIR, `task-${taskId}`);
     if (existsSync(worktreePath)) return worktreePath;
@@ -46,19 +96,13 @@ export function createWorktreeManager(config) {
           copyFileSync(join(repoDir, f), join(worktreePath, f));
         }
       } catch {}
-      // Write task context + agent instructions for PR linking
+      // Write task context + agent instructions
       try {
         const serverUrl = `http://localhost:${serverPort}`;
-        const linkCmd = `curl -s -X POST ${serverUrl}/task/${taskId}/link-pr -H 'Content-Type: application/json' -d '{"prUrl":"<PR_URL>"}'`;
         writeFileSync(join(worktreePath, ".mac-mini-task.json"), JSON.stringify({
-          taskId,
-          serverUrl,
-          linkPr: {
-            description: "PRを作成したら、このコマンドでダッシュボードに紐づけてください",
-            command: linkCmd,
-          },
+          taskId, serverUrl,
         }, null, 2) + "\n");
-
+        writeAgentInstructions(worktreePath, taskId, serverUrl);
       } catch {}
       console.log(`[worktree] Created ${worktreePath}`);
       return worktreePath;

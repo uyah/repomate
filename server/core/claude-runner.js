@@ -1,7 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { spawn, execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
 
 /**
  * Create a multi-runner (Claude Code + Codex) task executor.
@@ -354,31 +352,15 @@ export function createClaudeRunner(config) {
 
   // ─── Unified dispatch (the ONLY way to run tasks) ───
 
-  /**
-   * Read .mac-mini-task.json from worktree and append PR linking instruction to prompt.
-   * Only appends on first message (no sessionId = new conversation).
-   */
-  function enrichPrompt(prompt, sessionId, cwd) {
-    if (sessionId) return prompt; // resume — don't re-inject
-    if (!cwd) return prompt;
-    try {
-      const taskFile = join(cwd, ".mac-mini-task.json");
-      if (!existsSync(taskFile)) return prompt;
-      const ctx = JSON.parse(readFileSync(taskFile, "utf-8"));
-      if (!ctx.linkPr?.command) return prompt;
-      return prompt + `\n\n---\n[mac-mini-automation] PRを作成した場合は、以下のコマンドでダッシュボードに紐づけてください:\n${ctx.linkPr.command}\n<PR_URL> を実際のURLに置換すること。`;
-    } catch { return prompt; }
-  }
-
   function runTask(taskId, prompt, turns, sessionId, cwd, runner, opts = {}) {
     if (!runner || !VALID_RUNNERS.includes(runner)) {
       throw new Error(`Invalid runner: ${JSON.stringify(runner)}. Must be one of: ${VALID_RUNNERS.join(", ")}`);
     }
-    const enrichedPrompt = enrichPrompt(prompt, sessionId, cwd);
+    // Agent instructions are provided via CLAUDE.local.md / AGENTS.md in the worktree
     if (runner === "codex") {
-      _runCodex(taskId, enrichedPrompt, turns, sessionId, cwd, opts);
+      _runCodex(taskId, prompt, turns, sessionId, cwd, opts);
     } else {
-      _runClaude(taskId, enrichedPrompt, turns, sessionId, cwd, opts);
+      _runClaude(taskId, prompt, turns, sessionId, cwd, opts);
     }
   }
 
