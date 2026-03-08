@@ -157,7 +157,17 @@ export function registerRoutes(app, ctx) {
     const worktreeCwd = createWorktree(id, branch ? { branch: `origin/${branch}` } : undefined);
     const user = getCfUser(c);
     insertTask(id, displayPrompt, { callback, cwd: worktreeCwd, rootId: id, user, runner: runnerType });
-    if (branch) stmts.setThreadPr.run(null, branch, id);
+    if (branch) {
+      // Look up existing PR for this branch
+      let prUrl = null;
+      try {
+        prUrl = execSync(`gh pr view "${branch}" --json url --jq .url`, {
+          cwd: config.repoDir, encoding: "utf-8", timeout: 10000,
+          env: { ...process.env, ...worktrees.getGhToken() },
+        }).trim() || null;
+      } catch {}
+      stmts.setThreadPr.run(prUrl, branch, id);
+    }
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning });
 
     return c.json({ id, status: "accepted" }, 202);
