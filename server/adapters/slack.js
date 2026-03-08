@@ -142,7 +142,7 @@ export function registerSlack(app, ctx) {
         }
         if (isPrCmd) {
           const title = `task(${rootId}): ${prevTask.prompt.slice(0, 60)}`;
-          const body = `## Changes\n${changes.files.map(f => '- ' + f).join('\n')}`;
+          const body = `## Changes\n${changes.uncommittedFiles.map(f => '- ' + f).join('\n')}`;
           const result = createPullRequest(prevTask.cwd, rootId, title, body);
           if (result.ok) {
             closeThread(rootId);
@@ -245,10 +245,11 @@ export function registerSlack(app, ctx) {
         // Notify about worktree changes
         const wtChanges = getWorktreeChanges(worktreeCwd);
         if (wtChanges) {
-          const fileList = wtChanges.files.slice(0, 10).map(f => `  ${f}`).join("\n");
-          const more = wtChanges.files.length > 10 ? `\n  ...他${wtChanges.files.length - 10}件` : "";
+          const allFiles = wtChanges.uncommittedFiles;
+          const fileList = allFiles.slice(0, 10).map(f => `  ${f}`).join("\n");
+          const more = allFiles.length > 10 ? `\n  ...他${allFiles.length - 10}件` : "";
           await say({
-            text: `ワークツリーに変更があります (${wtChanges.files.length}ファイル):\n\`\`\`\n${fileList}${more}\n\`\`\`\n変更をどうしますか？\n• *mainにマージ* → \`マージして\` と返信\n• *PRを作成* → \`PR作って\` と返信\n• *破棄* → \`破棄して\` と返信`,
+            text: `ワークツリーに変更があります (${allFiles.length}ファイル):\n\`\`\`\n${fileList}${more}\n\`\`\`\n変更をどうしますか？\n• *mainにマージ* → \`マージして\` と返信\n• *PRを作成* → \`PR作って\` と返信\n• *破棄* → \`破棄して\` と返信`,
             thread_ts: threadTs,
           });
         }
