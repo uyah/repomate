@@ -180,8 +180,16 @@ export function registerRoutes(app, ctx) {
 
   // --- Get task ---
   app.get("/task/:id", (c) => {
-    const task = taskToJson(stmts.get.get(c.req.param("id")));
-    return task ? c.json(task) : c.json({ error: "not found" }, 404);
+    const row = stmts.get.get(c.req.param("id"));
+    if (!row) return c.json({ error: "not found" }, 404);
+    const task = taskToJson(row);
+    // Compute worktree changes (with git fetch) only for detail view
+    const lastCwd = row.cwd;
+    if (lastCwd && row.status !== "running") {
+      const changes = getWorktreeChanges(lastCwd, { fetch: true });
+      if (changes) task.worktreeChanges = changes;
+    }
+    return c.json(task);
   });
 
   // --- List tasks (threaded) ---
@@ -217,11 +225,7 @@ export function registerRoutes(app, ctx) {
       const replies = stmts.thread.all(row.id).filter((r) => r.id !== row.id);
       t.replies = replies.map(r => taskToJson(r));
       const lastTask = t.replies.length > 0 ? t.replies[t.replies.length - 1] : t;
-      const hasRunning = lastTask.status === "running" || t.replies.some(r => r.status === "running");
-      if (!hasRunning && lastTask.cwd) {
-        const changes = getWorktreeChanges(lastTask.cwd);
-        if (changes) t.worktreeChanges = changes;
-      }
+      // worktreeChanges is only computed in /task/:id detail (not here — too slow for listing)
       return t;
     });
 

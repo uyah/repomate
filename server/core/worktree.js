@@ -79,16 +79,19 @@ export function createWorktreeManager(config) {
     }
   }
 
-  function getWorktreeChanges(cwd) {
+  function getWorktreeChanges(cwd, opts) {
     if (!cwd || !existsSync(cwd)) return null;
     try {
-      // Uncommitted changes (local only — no network)
+      // Uncommitted changes
       const status = execSync("git status --porcelain", { cwd, encoding: "utf-8", timeout: 5000 }).trim();
       const uncommittedFiles = status ? status.split("\n").map(l => l.trim()).filter(Boolean) : [];
 
-      // Commits ahead of origin/main (uses local ref only — no fetch)
+      // Commits ahead of origin/main
       let commitsAhead = 0;
       try {
+        if (opts?.fetch) {
+          execSync("git fetch origin main --quiet", { cwd, stdio: "pipe", timeout: 10000 });
+        }
         const log = execSync("git log origin/main..HEAD --oneline", { cwd, encoding: "utf-8", timeout: 5000 }).trim();
         commitsAhead = log ? log.split("\n").length : 0;
       } catch {}
