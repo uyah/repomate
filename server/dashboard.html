@@ -432,8 +432,8 @@
         <textarea id="detailReplyInput" rows="1" placeholder="続きの指示... (Shift+Enterで改行)" autocomplete="off"></textarea>
         <div class="input-controls">
           <span class="spacer"></span>
-          <button class="attach-btn" onclick="document.getElementById('detailFileInput').click()">+</button>
-          <button onclick="sendDetailReply()">返信</button>
+          <button class="attach-btn" id="detailAttachBtn" onclick="document.getElementById('detailFileInput').click()">+</button>
+          <button id="detailSendBtn" onclick="sendDetailReply()">返信</button>
         </div>
         <input type="file" id="detailFileInput" multiple accept="image/*,.pdf,.csv,.txt,.json" style="display:none">
       </div>
@@ -867,15 +867,12 @@ function renderDetail(t) {
   const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '').trim().slice(0, 60);
   document.getElementById('detailTitle').textContent = prompt || '(タスク)';
 
-  // Action buttons
+  // Action buttons (top-right: PR/changes/Done — NOT cancel)
   const hasRunning = t.status === 'running' || t.replies?.some(r => r.status === 'running');
   const runningId = hasRunning ? (t.replies?.find(r => r.status === 'running')?.id || (t.status === 'running' ? t.id : null)) : null;
   let actionsHtml = '';
-  if (runningId) {
-    actionsHtml = `<button class="detail-cancel-btn" onclick="cancelTask('${runningId}')">キャンセル</button>`;
-  }
   const lastTaskId = t.replies?.length ? t.replies[t.replies.length - 1].id : t.id;
-  if (!hasRunning && !t.closedAt) {
+  if (!t.closedAt) {
     const wc = t.worktreeChanges;
     const hasUncommitted = wc && wc.uncommittedFiles && wc.uncommittedFiles.length > 0;
     const hasCommits = wc && wc.commitsAhead > 0;
@@ -987,9 +984,33 @@ function renderDetail(t) {
 
   // Reply input - always show unless closed
   const replyEl = document.getElementById('detailReply');
+  const sendBtn = document.getElementById('detailSendBtn');
+  const attachBtn = document.getElementById('detailAttachBtn');
+  const replyInput = document.getElementById('detailReplyInput');
   if (!t.closedAt) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
+    if (runningId) {
+      // Running: show cancel button, disable input
+      sendBtn.textContent = 'キャンセル';
+      sendBtn.onclick = () => cancelTask(runningId);
+      sendBtn.style.background = '#3a1a1a';
+      sendBtn.style.color = '#f87171';
+      sendBtn.style.borderColor = '#5a2a2a';
+      replyInput.disabled = true;
+      replyInput.placeholder = '実行中...';
+      attachBtn.style.display = 'none';
+    } else {
+      // Not running: show send button
+      sendBtn.textContent = '返信';
+      sendBtn.onclick = sendDetailReply;
+      sendBtn.style.background = '';
+      sendBtn.style.color = '';
+      sendBtn.style.borderColor = '';
+      replyInput.disabled = false;
+      replyInput.placeholder = '続きの指示... (Shift+Enterで改行)';
+      attachBtn.style.display = '';
+    }
   } else {
     replyEl.style.display = 'none';
   }
