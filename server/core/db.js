@@ -99,12 +99,16 @@ export function createDatabase(dbPath, runtime) {
   };
 
   /**
-   * Resolve the runner for a thread. Checks the given task first, then searches the thread.
+   * Resolve the runner for a thread. Root task's runner takes priority (it defines the thread's runner),
+   * then falls back to the given task, then searches the thread for any task with a runner.
    * @param {object|null} task - Task row (may have .runner)
    * @param {string} rootId - Thread root ID
    * @returns {string|null} Runner name or null if not found
    */
   function resolveThreadRunner(task, rootId) {
+    // Root task's runner is the source of truth for the thread
+    const root = stmts.get.get(rootId);
+    if (root?.runner) return root.runner;
     return task?.runner || stmts.latestRunnerInThread.get(rootId)?.runner || null;
   }
 
