@@ -112,6 +112,8 @@ export function createDatabase(dbPath, runtime) {
     devServerBySubdomain: db.prepare(`SELECT * FROM dev_servers WHERE subdomain = ?`),
     devServerAll: db.prepare(`SELECT * FROM dev_servers ORDER BY port ASC`),
     devServerMaxPort: db.prepare(`SELECT MAX(port) as max_port FROM dev_servers`),
+    // Rollback: delete all replies in a thread that came after a given task
+    deleteAfter: db.prepare(`DELETE FROM tasks WHERE root_id = ? AND started_at > (SELECT started_at FROM tasks WHERE id = ?) AND id != ?`),
   };
 
   const userStmts = {

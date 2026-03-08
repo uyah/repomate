@@ -207,6 +207,9 @@
   .running-detail { color: #555; font-family: monospace; font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .retry-btn { background: #3a2a1a; color: #fbbf24; border: 1px solid #5a4a2a; border-radius: 6px; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; margin-top: 6px; }
   .retry-btn:hover { background: #4a3a2a; }
+  .rollback-btn { background: none; border: 1px solid #444; color: #888; border-radius: 4px; padding: 1px 6px; font-size: 0.7rem; cursor: pointer; margin-left: 4px; opacity: 0; transition: opacity 0.15s; }
+  .msg:hover .rollback-btn { opacity: 1; }
+  .rollback-btn:hover { background: #2a2a3a; color: #a0a0ff; border-color: #666; }
 
   /* Events */
   .evt-text { margin: 4px 0; }
@@ -784,12 +787,16 @@ function getRunnerName(t) {
   return name + model;
 }
 
-function renderDetailMsg(t, isReply, isLast) {
+function renderDetailMsg(t, isReply, isLast, opts) {
+  opts = opts || {};
   // Only show badge on the last task, or running/failed tasks
   const showBadge = isLast || t.status === 'running' || ['failed','interrupted','cancelled'].includes(t.status);
   const displayStatus = (!isLast && ['completed','max_turns'].includes(t.status)) ? null : t.status;
   const badge = showBadge && displayStatus ? `<span class="badge badge-${displayStatus}">${displayStatus === 'completed' ? '返信待ち' : displayStatus === 'max_turns' ? '返信待ち' : displayStatus}</span>` : '';
-  const meta = `<span class="task-id">${t.id}</span> ${badge}`;
+  // Rollback button: show on non-last assistant messages when thread is not running/closed and has >1 steps
+  const canRollback = !isLast && !opts.closed && !opts.hasRunning && opts.total > 1;
+  const rollbackBtn = canRollback ? `<button class="rollback-btn" onclick="rollbackTo('${t.id}')" title="ここまで戻る">↩</button>` : '';
+  const meta = `<span class="task-id">${t.id}</span> ${badge} ${rollbackBtn}`;
   const timeStr = t.completedAt ? timeAgo(t.completedAt) : timeAgo(t.startedAt);
   const userName = formatUser(t.createdBy);
   const userLabel = isReply ? `↩ ${esc(userName)}` : esc(userName);
@@ -943,7 +950,7 @@ function renderDetail(t) {
   let html = '';
   for (let i = 0; i < allTasks.length; i++) {
     const isLast = i === allTasks.length - 1;
-    html += renderDetailMsg(allTasks[i], i > 0, isLast);
+    html += renderDetailMsg(allTasks[i], i > 0, isLast, { total: allTasks.length, index: i, closed: !!t.closedAt, hasRunning });
   }
   document.getElementById('detailBody').innerHTML = html;
 
@@ -1412,6 +1419,15 @@ async function retryTask(taskId) {
     if (!res.ok) { const e = await res.json(); alert(e.error || '再実行失敗'); return; }
     setTimeout(refresh, 500);
   } catch (e) { alert('再実行失敗: ' + e.message); }
+}
+
+async function rollbackTo(taskId) {
+  if (!confirm('この時点まで戻りますか？以降の返信は削除されます。')) return;
+  try {
+    const res = await fetch(API + '/task/' + taskId + '/rollback', { method: 'POST' });
+    if (!res.ok) { const e = await res.json(); alert(e.error || 'ロールバック失敗'); return; }
+    setTimeout(refresh, 500);
+  } catch (e) { alert('ロールバック失敗: ' + e.message); }
 }
 
 async function cancelTask(taskId) {

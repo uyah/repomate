@@ -497,6 +497,19 @@ export function registerRoutes(app, ctx) {
     return c.json({ id, status: "accepted", compacting: sessionId, runner: taskRunner }, 202);
   });
 
+  // --- Rollback thread to a specific step ---
+  app.post("/task/:id/rollback", (c) => {
+    const task = stmts.get.get(c.req.param("id"));
+    if (!task) return c.json({ error: "not found" }, 404);
+    const rootId = task.root_id || task.id;
+    if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread has running tasks" }, 409);
+
+    // Delete all replies that came after this task
+    const result = stmts.deleteAfter.run(rootId, task.id, task.id);
+    console.log(`[rollback] Rolled back thread ${rootId} to task ${task.id}, deleted ${result.changes} reply(ies)`);
+    return c.json({ status: "rolled_back", targetId: task.id, deleted: result.changes });
+  });
+
   // --- Close thread (manual done, no changes) ---
   app.post("/task/:id/close", (c) => {
     const task = stmts.get.get(c.req.param("id"));
