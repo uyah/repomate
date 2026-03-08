@@ -207,14 +207,20 @@ export function createClaudeRunner(config) {
     (async () => {
       let lastResultText = "";
       let lastErrorText = "";
+      let capturedSessionId = sessionId;
 
       try {
-        const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
+        const args = ["exec"];
+        if (sessionId) {
+          // Resume existing thread
+          args.push("resume", sessionId);
+        }
+        args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
         if (codexModel) args.push("-m", codexModel);
         if (cwd || repoDir) args.push("--cd", cwd || repoDir);
         args.push(prompt);
 
-        const env = { ...process.env, ...getGhToken() };
+        const env = { ...process.env, ...getGhToken(), PATH: `/opt/homebrew/bin:${process.env.PATH}` };
         delete env.CLAUDECODE;
 
         const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -242,6 +248,10 @@ export function createClaudeRunner(config) {
             if (!line.trim()) continue;
             try {
               const evt = JSON.parse(line);
+              // Capture thread_id as session_id for resume
+              if (evt.type === "thread.started" && evt.thread_id) {
+                capturedSessionId = evt.thread_id;
+              }
               handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
             } catch {}
           }
@@ -249,10 +259,12 @@ export function createClaudeRunner(config) {
 
         await new Promise((resolve) => {
           child.on("close", (code) => {
-            // Process remaining buffer
             if (lineBuf.trim()) {
               try {
                 const evt = JSON.parse(lineBuf);
+                if (evt.type === "thread.started" && evt.thread_id) {
+                  capturedSessionId = evt.thread_id;
+                }
                 handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
               } catch {}
             }
@@ -269,7 +281,7 @@ export function createClaudeRunner(config) {
         }
       }
 
-      finalizeTask(taskId, { capturedSessionId: null, lastResultText, lastErrorText, resultSubtype: null, totalCostUsd: null, usageData: null, liveData, abortController });
+      finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype: null, totalCostUsd: null, usageData: null, liveData, abortController });
       await sendCallback(taskId);
     })();
   }
