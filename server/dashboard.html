@@ -711,6 +711,8 @@ function toggleTool(id) {
 function getThreadStatus(t) {
   const rawStatus = t.replies?.length ? t.replies[t.replies.length - 1].status : t.status;
   if (t.closedAt) return 'done';
+  // Running takes priority over PR status
+  if (rawStatus === 'running' || t.replies?.some(r => r.status === 'running')) return 'running';
   if (t.prUrl) return 'pr';
   // Non-running finished states → "waiting for user reply"
   if (['completed', 'max_turns'].includes(rawStatus)) return 'waiting';
