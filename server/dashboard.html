@@ -990,9 +990,8 @@ function renderDetail(t) {
   if (!t.closedAt) {
     replyEl.style.display = '';
     replyEl.dataset.taskId = last.id;
-    // Root task's runner is the source of truth for the thread
-    const threadRunner = t.runner || last.runner || 'claude';
-    replyEl.dataset.runner = threadRunner;
+    // Root task (t) is the source of truth for the thread runner — no fallback
+    replyEl.dataset.runner = t.runner;
     if (runningId) {
       // Running: show cancel button, disable input
       sendBtn.textContent = 'キャンセル';
@@ -1388,7 +1387,8 @@ async function sendDetailReply() {
   replyLock.active = true;
   try {
     // Use thread's runner (inherited from dataset), not the list selector
-    const replyRunner = document.getElementById('detailReply').dataset.runner || 'claude';
+    const replyRunner = document.getElementById('detailReply').dataset.runner;
+    if (!replyRunner) { alert('runner が不明です。ページを更新してください。'); replyLock.active = false; return; }
     const model = document.getElementById('modelSelect').value;
     const reasoning = replyRunner === 'codex' ? document.getElementById('reasoningSelect').value : '';
     const body = { prompt: prompt || '添付ファイルを確認してください', runner: replyRunner };

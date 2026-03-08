@@ -106,10 +106,9 @@ export function createDatabase(dbPath, runtime) {
    * @returns {string|null} Runner name or null if not found
    */
   function resolveThreadRunner(task, rootId) {
-    // Root task's runner is the source of truth for the thread
+    // Root task is the single source of truth — no fallback
     const root = stmts.get.get(rootId);
-    if (root?.runner) return root.runner;
-    return task?.runner || stmts.latestRunnerInThread.get(rootId)?.runner || null;
+    return root?.runner || null;
   }
 
   function taskToJson(row, opts) {
