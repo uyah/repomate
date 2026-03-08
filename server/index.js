@@ -5,6 +5,7 @@ import { readFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
+import { createConnection } from "net";
 
 import { createApp } from "./core/app.js";
 
@@ -76,13 +77,39 @@ function killPortUser(port) {
 (async () => {
   killPortUser(config.port);
 
-  const { app, cleanup } = await createApp(config);
+  const { app, cleanup, worktrees, baseDomain } = await createApp(config);
 
   process.on("SIGTERM", () => cleanup("SIGTERM"));
   process.on("SIGINT", () => cleanup("SIGINT"));
 
-  serve({ fetch: app.fetch, port: config.port }, (info) => {
+  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Webhook server running on http://localhost:${info.port}`);
     console.log(`Repo dir: ${config.repoDir}`);
   });
+
+  // --- WebSocket proxy for dev server subdomains (HMR) ---
+  if (baseDomain) {
+    server.on("upgrade", (req, socket, head) => {
+      const host = req.headers.host || "";
+      if (!host.endsWith(`.${baseDomain}`)) return socket.destroy();
+      const subdomain = host.replace(`.${baseDomain}`, "");
+      const ds = worktrees.getDevServerBySubdomain(subdomain);
+      if (!ds) return socket.destroy();
+
+      const target = createConnection({ port: ds.port, host: "127.0.0.1" }, () => {
+        // Forward the original HTTP upgrade request
+        const path = req.url || "/";
+        target.write(`${req.method} ${path} HTTP/${req.httpVersion}\r\n`);
+        for (let i = 0; i < req.rawHeaders.length; i += 2) {
+          target.write(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`);
+        }
+        target.write("\r\n");
+        if (head.length > 0) target.write(head);
+        target.pipe(socket);
+        socket.pipe(target);
+      });
+      target.on("error", () => socket.destroy());
+      socket.on("error", () => target.destroy());
+    });
+  }
 })();

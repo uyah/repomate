@@ -182,6 +182,8 @@ export async function createApp(config) {
   return {
     app,
     runner,
+    worktrees,
+    baseDomain: baseDomain || null,
     cleanup: (signal) => {
       worktrees.stopAllDevServers();
       runner.gracefulShutdown(signal);
