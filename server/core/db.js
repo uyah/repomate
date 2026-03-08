@@ -40,6 +40,29 @@ export function createDatabase(dbPath, runtime) {
   try { db.exec(`ALTER TABLE tasks ADD COLUMN usage_json TEXT`); } catch {}
   try { db.exec(`ALTER TABLE tasks ADD COLUMN runner TEXT`); } catch {}
 
+  // --- Backfill runner from events_json for tasks created before runner column ---
+  {
+    const nullRunnerCount = db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE runner IS NULL`).get().c;
+    if (nullRunnerCount > 0) {
+      db.exec(`
+        UPDATE tasks SET runner = 'codex' WHERE runner IS NULL AND (
+          events_json LIKE '%"runner":"codex"%'
+          OR (events_json NOT LIKE '%"runner":%' AND events_json LIKE '%"model":"gpt-%')
+        )
+      `);
+      db.exec(`
+        UPDATE tasks SET runner = 'claude' WHERE runner IS NULL AND (
+          events_json LIKE '%"runner":"claude"%'
+          OR (events_json NOT LIKE '%"runner":%' AND events_json LIKE '%"model":"claude-%')
+        )
+      `);
+      // Default remaining to 'claude' (pre-Codex era tasks)
+      db.exec(`UPDATE tasks SET runner = 'claude' WHERE runner IS NULL`);
+      const fixed = nullRunnerCount - db.prepare(`SELECT COUNT(*) as c FROM tasks WHERE runner IS NULL`).get().c;
+      if (fixed > 0) console.log(`[db] Backfilled runner for ${fixed} task(s)`);
+    }
+  }
+
   // --- Users table ---
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
