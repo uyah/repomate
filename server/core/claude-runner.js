@@ -57,6 +57,36 @@ export function createClaudeRunner(config) {
     if (totalCostUsd != null || usageData) {
       stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
     }
+
+    // Auto-detect PR URLs from result or events and link to thread
+    detectAndLinkPr(taskId, lastResultText, liveData.events);
+  }
+
+  function detectAndLinkPr(taskId, resultText, events) {
+    const task = stmts.get.get(taskId);
+    if (!task) return;
+    const rootId = task.root_id || task.id;
+
+    // Skip if thread already has a PR linked
+    const rootTask = rootId !== taskId ? stmts.get.get(rootId) : task;
+    if (rootTask?.pr_url) return;
+
+    // Search result text and all text events for PR URL
+    const searchTexts = [resultText || ""];
+    for (const evt of events) {
+      if (evt.type === "text" && evt.text) searchTexts.push(evt.text);
+      if (evt.type === "tool_result" && evt.content) searchTexts.push(evt.content);
+    }
+
+    for (const text of searchTexts) {
+      const prMatch = text.match(/https:\/\/github\.com\/[^\s)>\]]+\/pull\/\d+/);
+      if (prMatch) {
+        const branchMatch = text.match(/task\/[a-z0-9-]+|test\/[a-z0-9_-]+|fix\/[a-z0-9_-]+|feat\/[a-z0-9_-]+/i);
+        stmts.setThreadPr.run(prMatch[0], branchMatch?.[0] || null, rootId);
+        console.log(`[pr-detect] Linked PR ${prMatch[0]} to thread ${rootId}`);
+        return;
+      }
+    }
   }
 
   async function sendCallback(taskId) {
