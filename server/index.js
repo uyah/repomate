@@ -22,24 +22,12 @@ process.on("unhandledRejection", (reason) => {
 
 // --- Load config ---
 const configPath = process.argv.find((a, i) => process.argv[i - 1] === "--config") || process.env.MAC_MINI_CONFIG;
-let config;
-if (configPath) {
-  config = JSON.parse(readFileSync(configPath, "utf-8"));
-} else {
-  // Fallback: construct config from env vars (backward compatible)
-  const repoDir = process.env.SALES_DIR || `${process.env.HOME}/primaryinc/sales`;
-  config = {
-    repoDir,
-    dbPath: join(__dirname, "tasks.db"),
-    uploadsDir: join(__dirname, "uploads"),
-    maxTurns: parseInt(process.env.MAX_TURNS || "30", 10),
-    port: parseInt(process.env.PORT || "8080", 10),
-    serverDir: __dirname,
-    webhookServer: {
-      adapters: ["slack"],
-    },
-  };
+if (!configPath) {
+  console.error("ERROR: --config <path> or MAC_MINI_CONFIG env is required.");
+  console.error("Usage: mac-mini-server --config <config.json>");
+  process.exit(1);
 }
+let config = JSON.parse(readFileSync(configPath, "utf-8"));
 
 // Resolve $HOME in string values
 function resolveEnvVars(obj) {
