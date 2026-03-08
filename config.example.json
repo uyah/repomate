@@ -41,7 +41,7 @@
 
   "deploy": {
     "tmuxSessions": {
-      "task-runner": "cd $REPO_DIR && exec ./node_modules/.bin/mac-mini-task-runner --config mac-mini.config.json"
+      "task-runner": "cd $REPO_DIR && exec ./node_modules/.bin/repomate-runner --config repomate.config.json"
     }
   }
 }

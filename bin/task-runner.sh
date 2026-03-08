@@ -1,5 +1,5 @@
 #!/bin/bash
-# task-runner.sh - 汎用 Mac Mini 自動タスクランナー
+# task-runner.sh - Repomate 自動タスクランナー
 #
 # JSON設定ファイルで複数リポジトリに対応。
 #
@@ -10,9 +10,9 @@
 #   Phase 4: mainとのコンフリクトを検出 → 自動rebase/解消
 #
 # Usage:
-#   ./bin/task-runner.sh --config config/manga-app.json              # 連続ポーリング
-#   ./bin/task-runner.sh --config config/manga-app.json --once       # 1回だけ実行
-#   ./bin/task-runner.sh --config config/manga-app.json --dry-run    # 対象表示のみ
+#   ./bin/task-runner.sh --config repomate.config.json              # 連続ポーリング
+#   ./bin/task-runner.sh --config repomate.config.json --once       # 1回だけ実行
+#   ./bin/task-runner.sh --config repomate.config.json --dry-run    # 対象表示のみ
 
 set -euo pipefail
 

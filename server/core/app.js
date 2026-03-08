@@ -14,7 +14,7 @@ import { getCfUser } from "../adapters/cloudflare-auth.js";
 /**
  * Create the full Hono application with all modules wired together.
  * @param {object} config
- * @param {string} config.repoDir - Main repository directory (SALES_DIR equivalent)
+ * @param {string} config.repoDir - Main repository directory
  * @param {string} config.dbPath - Path to SQLite database file
  * @param {string} config.uploadsDir - Path to uploads directory
  * @param {number} [config.maxTurns=30] - Default max turns for Claude

@@ -1,17 +1,21 @@
 {
-  "name": "@uyah/mac-mini-automation",
+  "name": "repomate",
   "version": "0.1.0",
-  "description": "Mac Mini automation: GitHub Issue → Claude Code → PR workflow",
+  "description": "Inject AI agents into any repository: GitHub Issue → Agent → PR workflow",
   "type": "module",
   "bin": {
-    "mac-mini-server": "./server/index.js",
-    "mac-mini-task-runner": "./bin/task-runner.sh",
-    "mac-mini-worktree": "./bin/worktree.sh",
-    "mac-mini-deploy": "./bin/deploy.sh",
-    "mac-mini-setup": "./bin/setup-mac-mini.sh"
+    "repomate-server": "./server/index.js",
+    "repomate-runner": "./bin/task-runner.sh",
+    "repomate-worktree": "./bin/worktree.sh",
+    "repomate-deploy": "./bin/deploy.sh",
+    "repomate-setup": "./bin/setup.sh"
   },
   "exports": {
     "./server": "./server/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uyah/repomate.git"
   },
   "files": [
     "bin/",
@@ -33,6 +37,6 @@
   "scripts": {
     "start": "node server/index.js"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": false
 }

@@ -6,17 +6,19 @@
 #   # => GH_TOKEN が設定される
 #
 # Required environment variables:
-#   MAC_MINI_APP_ID          - GitHub App ID
-#   MAC_MINI_INSTALLATION_ID - GitHub App Installation ID
-#   MAC_MINI_PEM_FILE        - Path to private key PEM file
+#   REPOMATE_APP_ID          - GitHub App ID
+#   REPOMATE_INSTALLATION_ID - GitHub App Installation ID
+#   REPOMATE_PEM_FILE        - Path to private key PEM file
+#
+# Backwards compatible: also reads MAC_MINI_* variants
 #
 # Requires: openssl, curl, jq
 
 set -euo pipefail
 
-APP_ID="${MAC_MINI_APP_ID:?MAC_MINI_APP_ID is required}"
-INSTALLATION_ID="${MAC_MINI_INSTALLATION_ID:?MAC_MINI_INSTALLATION_ID is required}"
-PEM_FILE="${MAC_MINI_PEM_FILE:?MAC_MINI_PEM_FILE is required}"
+APP_ID="${REPOMATE_APP_ID:-${MAC_MINI_APP_ID:?REPOMATE_APP_ID is required}}"
+INSTALLATION_ID="${REPOMATE_INSTALLATION_ID:-${MAC_MINI_INSTALLATION_ID:?REPOMATE_INSTALLATION_ID is required}}"
+PEM_FILE="${REPOMATE_PEM_FILE:-${MAC_MINI_PEM_FILE:?REPOMATE_PEM_FILE is required}}"
 
 if [ ! -f "$PEM_FILE" ]; then
   echo "ERROR: PEM file not found: $PEM_FILE" >&2

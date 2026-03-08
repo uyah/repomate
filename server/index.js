@@ -27,10 +27,10 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // --- Load config ---
-const configPath = process.argv.find((a, i) => process.argv[i - 1] === "--config") || process.env.MAC_MINI_CONFIG;
+const configPath = process.argv.find((a, i) => process.argv[i - 1] === "--config") || process.env.REPOMATE_CONFIG;
 if (!configPath) {
-  console.error("ERROR: --config <path> or MAC_MINI_CONFIG env is required.");
-  console.error("Usage: mac-mini-server --config <config.json>");
+  console.error("ERROR: --config <path> or REPOMATE_CONFIG env is required.");
+  console.error("Usage: repomate-server --config <config.json>");
   process.exit(1);
 }
 let config = JSON.parse(readFileSync(configPath, "utf-8"));

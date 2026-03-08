@@ -32,9 +32,9 @@ export function createWorktreeManager(config) {
 
   function agentInstructions(taskId, serverUrl) {
     const API = serverUrl;
-    return `# Mac Mini Automation
+    return `# Repomate
 
-このworktreeはmac-mini-automationのタスク \`${taskId}\` 用です。
+このworktreeはrepomateのタスク \`${taskId}\` 用です。
 以下のAPIでautomationサーバーを操作できます。
 
 ## Dev Server
@@ -99,7 +99,7 @@ curl -s -X POST ${API}/task/${taskId}/close
       // Write task context + agent instructions
       try {
         const serverUrl = `http://localhost:${serverPort}`;
-        writeFileSync(join(worktreePath, ".mac-mini-task.json"), JSON.stringify({
+        writeFileSync(join(worktreePath, ".repomate-task.json"), JSON.stringify({
           taskId, serverUrl,
         }, null, 2) + "\n");
         writeAgentInstructions(worktreePath, taskId, serverUrl);

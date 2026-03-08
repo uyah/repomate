@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Mac Mini Automation Config",
+  "title": "Repomate Config",
   "type": "object",
   "required": ["repo", "label", "repoDir", "worktreeBase", "auth", "phases"],
   "properties": {
