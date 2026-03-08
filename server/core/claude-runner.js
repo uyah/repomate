@@ -331,7 +331,12 @@ export function createClaudeRunner(config) {
 
   // ─── Unified dispatch ───
 
+  const VALID_RUNNERS = ["claude", "codex"];
+
   function runTask(taskId, prompt, turns, sessionId, cwd, runner) {
+    if (!runner || !VALID_RUNNERS.includes(runner)) {
+      throw new Error(`Invalid runner: ${JSON.stringify(runner)}. Must be one of: ${VALID_RUNNERS.join(", ")}`);
+    }
     if (runner === "codex") {
       runCodex(taskId, prompt, turns, sessionId, cwd);
     } else {

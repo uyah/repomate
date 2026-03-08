@@ -76,6 +76,7 @@ export function registerRoutes(app, ctx) {
   app.post("/task", async (c) => {
     const { prompt, maxTurns, callback, files, branch, runner: runnerType } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
+    if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
     let displayPrompt = prompt;
     let fullPrompt = prompt;
@@ -198,6 +199,7 @@ export function registerRoutes(app, ctx) {
 
     const { prompt, maxTurns, files, runner: runnerType } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
+    if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
     let displayPrompt = prompt;
     let fullPrompt = prompt;

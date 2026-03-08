@@ -687,7 +687,8 @@ function renderThreadItem(t) {
 // === Detail: full thread messages ===
 function getRunnerName(t) {
   const initEvt = (t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
-  if (initEvt?.model === 'codex') return 'CODEX';
+  if (!initEvt) return '(unknown)';
+  if (initEvt.runner === 'codex' || initEvt.model === 'codex') return 'CODEX';
   return 'CLAUDE';
 }
 
