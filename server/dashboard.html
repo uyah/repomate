@@ -362,6 +362,10 @@
       </div>
       <div class="input-row">
         <input id="promptInput" type="text" placeholder="新しいタスク..." autocomplete="off">
+        <select id="runnerSelect" title="ランナー選択" style="padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+          <option value="claude">Claude</option>
+          <option value="codex">Codex</option>
+        </select>
         <button id="sendBtn" onclick="sendTask()">送信</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
         <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
@@ -1183,7 +1187,8 @@ async function sendTask() {
   try {
     const files = pendingFiles.map(f => f.name);
     const branch = branchInput.value.trim();
-    const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30 };
+    const runner = document.getElementById('runnerSelect').value;
+    const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30, runner };
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -1209,7 +1214,8 @@ async function sendDetailReply() {
   if (!prompt && files.length === 0) return;
   replyLock.active = true;
   try {
-    const body = { prompt: prompt || '添付ファイルを確認してください' };
+    const runner = document.getElementById('runnerSelect').value;
+    const body = { prompt: prompt || '添付ファイルを確認してください', runner };
     if (files.length > 0) body.files = files;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = '';

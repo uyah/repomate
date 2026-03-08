@@ -10,7 +10,7 @@ import { join, extname } from "path";
  */
 export function registerRoutes(app, ctx) {
   const { db, stmts, userStmts, taskToJson, runner, worktrees, config, getCfUser } = ctx;
-  const { runClaude, runClaudeSync, cancelTask, runningPids, liveOutputs } = runner;
+  const { runClaude, runTask, runClaudeSync, cancelTask, runningPids, liveOutputs } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
   const MAX_TURNS = config.maxTurns;
@@ -74,7 +74,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
     let displayPrompt = prompt;
@@ -101,7 +101,7 @@ export function registerRoutes(app, ctx) {
     const now = new Date().toISOString();
     stmts.insert.run(id, displayPrompt, now, callback || null, worktreeCwd, null, null, id, null, user);
     if (branch) stmts.setThreadPr.run(null, branch, id);
-    runClaude(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd);
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType);
 
     return c.json({ id, status: "accepted" }, 202);
   });
@@ -196,7 +196,7 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const { prompt, maxTurns, files } = await c.req.json();
+    const { prompt, maxTurns, files, runner: runnerType } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
 
     let displayPrompt = prompt;
@@ -216,7 +216,7 @@ export function registerRoutes(app, ctx) {
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     const user = getCfUser(c);
     stmts.insert.run(id, displayPrompt, new Date().toISOString(), null, cwd, sessionId, original.id, rootId, null, user);
-    runClaude(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd);
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType);
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
   });

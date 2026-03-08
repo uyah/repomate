@@ -1,7 +1,8 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "child_process";
 
 /**
- * Create a Claude runner using the Agent SDK.
+ * Create a multi-runner (Claude Code + Codex) task executor.
  * @param {object} config
  * @param {object} config.stmts - DB prepared statements
  * @param {object} config.db - SQLite database instance
@@ -20,16 +21,64 @@ export function createClaudeRunner(config) {
   // Backward-compat: expose a pid-like Map for routes that check runningPids.size
   const runningPids = new Map();
 
-  function runClaude(taskId, prompt, turns, sessionId, cwd) {
-    const abortController = new AbortController();
-    runningTasks.set(taskId, abortController);
-    // Store a sentinel so runningPids.size reflects active tasks
-    runningPids.set(taskId, process.pid);
+  // ─── Shared helpers ───
 
+  function setupLiveData(taskId) {
     const existingTask = stmts.get.get(taskId);
     const prevEvents = existingTask?.events_json ? JSON.parse(existingTask.events_json) : [];
     const liveData = { events: [...prevEvents], lastText: "" };
     liveOutputs.set(taskId, liveData);
+    return liveData;
+  }
+
+  function finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype, totalCostUsd, usageData, liveData, abortController }) {
+    runningTasks.delete(taskId);
+    runningPids.delete(taskId);
+    liveOutputs.delete(taskId);
+    const completedAt = new Date().toISOString();
+    const eventsJson = liveData.events.length > 0 ? JSON.stringify(liveData.events) : null;
+
+    if (abortController.signal.aborted) {
+      stmts.update.run("cancelled", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+    } else if (resultSubtype === "error_max_turns") {
+      stmts.update.run("max_turns", completedAt, lastResultText || null, "max turns reached", capturedSessionId, eventsJson, taskId);
+    } else if (!lastErrorText) {
+      const costInfo = totalCostUsd != null ? ` ($${totalCostUsd.toFixed(4)})` : "";
+      stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+      console.log(`[${taskId}] completed${costInfo} - ${(lastResultText || "").slice(0, 80)}`);
+    } else {
+      stmts.update.run("failed", completedAt, null, lastErrorText, capturedSessionId, eventsJson, taskId);
+      console.log(`[${taskId}] failed - ${lastErrorText.slice(0, 100)}`);
+    }
+
+    // Save cost/usage
+    if (totalCostUsd != null || usageData) {
+      stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
+    }
+  }
+
+  async function sendCallback(taskId) {
+    const task = stmts.get.get(taskId);
+    if (task?.callback) {
+      try {
+        await fetch(task.callback, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: taskId, status: task.status, result: task.result, error: task.error }),
+        });
+      } catch (e) {
+        console.error(`Callback failed for ${taskId}: ${e.message}`);
+      }
+    }
+  }
+
+  // ─── Claude Code runner (Agent SDK) ───
+
+  function runClaude(taskId, prompt, turns, sessionId, cwd) {
+    const abortController = new AbortController();
+    runningTasks.set(taskId, abortController);
+    runningPids.set(taskId, process.pid);
+    const liveData = setupLiveData(taskId);
 
     const sdkOptions = {
       abortController,
@@ -46,7 +95,6 @@ export function createClaudeRunner(config) {
     };
     if (sessionId) sdkOptions.resume = sessionId;
 
-    // Run async
     (async () => {
       let capturedSessionId = sessionId;
       let lastResultText = "";
@@ -60,7 +108,6 @@ export function createClaudeRunner(config) {
 
         for await (const msg of conversation) {
           if (abortController.signal.aborted) break;
-
           if (msg.session_id) capturedSessionId = msg.session_id;
 
           switch (msg.type) {
@@ -71,12 +118,7 @@ export function createClaudeRunner(config) {
                   lastResultText = block.text;
                   liveData.events.push({ type: "text", text: block.text });
                 } else if (block.type === "tool_use") {
-                  liveData.events.push({
-                    type: "tool_use",
-                    name: block.name,
-                    input: block.input,
-                    tool_use_id: block.id,
-                  });
+                  liveData.events.push({ type: "tool_use", name: block.name, input: block.input, tool_use_id: block.id });
                 } else if (block.type === "thinking") {
                   liveData.events.push({ type: "thinking", text: block.thinking });
                 }
@@ -84,27 +126,17 @@ export function createClaudeRunner(config) {
               liveData.lastText = lastResultText;
               break;
             }
-
             case "user": {
               if (!msg.message?.content) break;
-              const content = msg.message.content;
-              const blocks = Array.isArray(content) ? content : [];
+              const blocks = Array.isArray(msg.message.content) ? msg.message.content : [];
               for (const block of blocks) {
                 if (block.type === "tool_result") {
-                  const text = Array.isArray(block.content)
-                    ? block.content.map(c => c.text || "").join("")
-                    : String(block.content || "");
-                  liveData.events.push({
-                    type: "tool_result",
-                    tool_use_id: block.tool_use_id,
-                    content: text.slice(0, 2000),
-                    is_error: block.is_error || false,
-                  });
+                  const text = Array.isArray(block.content) ? block.content.map(c => c.text || "").join("") : String(block.content || "");
+                  liveData.events.push({ type: "tool_result", tool_use_id: block.tool_use_id, content: text.slice(0, 2000), is_error: block.is_error || false });
                 }
               }
               break;
             }
-
             case "result": {
               if (msg.session_id) capturedSessionId = msg.session_id;
               if (msg.subtype) resultSubtype = msg.subtype;
@@ -112,49 +144,26 @@ export function createClaudeRunner(config) {
               if (msg.total_cost_usd != null) totalCostUsd = msg.total_cost_usd;
               if (msg.usage) usageData = msg.usage;
               if (msg.num_turns != null) {
-                liveData.events.push({
-                  type: "result_meta",
-                  cost_usd: msg.total_cost_usd,
-                  num_turns: msg.num_turns,
-                  duration_ms: msg.duration_ms,
-                  input_tokens: msg.usage?.input_tokens,
-                  output_tokens: msg.usage?.output_tokens,
-                });
+                liveData.events.push({ type: "result_meta", cost_usd: msg.total_cost_usd, num_turns: msg.num_turns, duration_ms: msg.duration_ms, input_tokens: msg.usage?.input_tokens, output_tokens: msg.usage?.output_tokens });
               }
               if (msg.is_error) {
                 lastErrorText = msg.result || (msg.errors && msg.errors.join("; ")) || "Unknown error";
               }
               break;
             }
-
             case "prompt_suggestion": {
-              liveData.events.push({
-                type: "prompt_suggestion",
-                suggestion: msg.suggestion,
-              });
+              liveData.events.push({ type: "prompt_suggestion", suggestion: msg.suggestion });
               break;
             }
-
             case "system": {
               if (msg.subtype === "init") {
-                liveData.events.push({
-                  type: "system",
-                  subtype: "init",
-                  model: msg.model,
-                  tools: msg.tools,
-                });
+                liveData.events.push({ type: "system", subtype: "init", model: msg.model, tools: msg.tools });
               } else if (msg.subtype === "compact_boundary") {
-                liveData.events.push({
-                  type: "system",
-                  subtype: "compact_boundary",
-                  pre_tokens: msg.compact_metadata?.pre_tokens,
-                });
+                liveData.events.push({ type: "system", subtype: "compact_boundary", pre_tokens: msg.compact_metadata?.pre_tokens });
               }
               break;
             }
-
             case "stream_event": {
-              // Partial streaming — emit delta text for live display
               const evt = msg.event;
               if (evt?.type === "content_block_delta" && evt.delta?.type === "text_delta") {
                 liveData.lastText = (liveData.lastText || "") + evt.delta.text;
@@ -165,14 +174,10 @@ export function createClaudeRunner(config) {
         }
       } catch (err) {
         if (abortController.signal.aborted) {
-          // Cancelled by user — not an error
           console.log(`[${taskId}] cancelled`);
         } else if (sessionId && err.message && err.message.includes("No conversation found")) {
-          // Auto-retry without --resume if session not found
           console.log(`[${taskId}] Session not found, retrying without --resume`);
-          runningTasks.delete(taskId);
-          runningPids.delete(taskId);
-          liveOutputs.delete(taskId);
+          runningTasks.delete(taskId); runningPids.delete(taskId); liveOutputs.delete(taskId);
           stmts.update.run("failed", new Date().toISOString(), null, err.message, null, null, taskId);
           runClaude(taskId, prompt, turns, null, cwd);
           return;
@@ -182,45 +187,132 @@ export function createClaudeRunner(config) {
         }
       }
 
-      // Cleanup
-      runningTasks.delete(taskId);
-      runningPids.delete(taskId);
-      liveOutputs.delete(taskId);
-      const completedAt = new Date().toISOString();
-      const eventsJson = liveData.events.length > 0 ? JSON.stringify(liveData.events) : null;
+      finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype, totalCostUsd, usageData, liveData, abortController });
+      await sendCallback(taskId);
+    })();
+  }
 
-      if (abortController.signal.aborted) {
-        stmts.update.run("cancelled", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
-      } else if (resultSubtype === "error_max_turns") {
-        stmts.update.run("max_turns", completedAt, lastResultText || null, "max turns reached", capturedSessionId, eventsJson, taskId);
-      } else if (!lastErrorText) {
-        const costInfo = totalCostUsd != null ? ` ($${totalCostUsd.toFixed(4)})` : "";
-        stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
-        console.log(`[${taskId}] completed${costInfo} - ${prompt.slice(0, 80)}`);
-      } else {
-        stmts.update.run("failed", completedAt, null, lastErrorText, capturedSessionId, eventsJson, taskId);
-        console.log(`[${taskId}] failed - ${lastErrorText.slice(0, 100)}`);
-      }
+  // ─── Codex runner (CLI exec --json) ───
 
-      // Save cost/usage
-      if (totalCostUsd != null || usageData) {
-        stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
-      }
+  function runCodex(taskId, prompt, turns, sessionId, cwd) {
+    const abortController = new AbortController();
+    runningTasks.set(taskId, abortController);
+    runningPids.set(taskId, process.pid);
+    const liveData = setupLiveData(taskId);
 
-      // Callback
-      const task = stmts.get.get(taskId);
-      if (task?.callback) {
-        try {
-          await fetch(task.callback, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: taskId, status: task.status, result: task.result, error: task.error }),
+    liveData.events.push({ type: "system", subtype: "init", model: "codex", tools: [] });
+
+    (async () => {
+      let lastResultText = "";
+      let lastErrorText = "";
+
+      try {
+        const args = ["exec", "--json", "--full-auto"];
+        if (cwd || repoDir) args.push("--cd", cwd || repoDir);
+        args.push(prompt);
+
+        const env = { ...process.env, ...getGhToken() };
+        delete env.CLAUDECODE;
+
+        const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"] });
+        const pid = child.pid;
+        runningPids.set(taskId, pid);
+
+        abortController.signal.addEventListener("abort", () => {
+          try { process.kill(pid, "SIGTERM"); } catch {}
+        });
+
+        let stderrBuf = "";
+        child.stderr.on("data", (chunk) => { stderrBuf += chunk.toString(); });
+
+        // Parse JSONL stream
+        let lineBuf = "";
+        child.stdout.on("data", (chunk) => {
+          lineBuf += chunk.toString();
+          const lines = lineBuf.split("\n");
+          lineBuf = lines.pop(); // keep incomplete line
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const evt = JSON.parse(line);
+              handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
+            } catch {}
+          }
+        });
+
+        await new Promise((resolve) => {
+          child.on("close", (code) => {
+            // Process remaining buffer
+            if (lineBuf.trim()) {
+              try {
+                const evt = JSON.parse(lineBuf);
+                handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
+              } catch {}
+            }
+            if (code !== 0 && !abortController.signal.aborted) {
+              lastErrorText = stderrBuf.slice(0, 500) || `codex exited with code ${code}`;
+            }
+            resolve();
           });
-        } catch (e) {
-          console.error(`Callback failed for ${taskId}: ${e.message}`);
+        });
+      } catch (err) {
+        if (!abortController.signal.aborted) {
+          lastErrorText = err.message || "Unknown error";
+          console.error(`[${taskId}] Codex error: ${lastErrorText}`);
         }
       }
+
+      finalizeTask(taskId, { capturedSessionId: null, lastResultText, lastErrorText, resultSubtype: null, totalCostUsd: null, usageData: null, liveData, abortController });
+      await sendCallback(taskId);
     })();
+  }
+
+  function handleCodexEvent(evt, liveData, setResult) {
+    // Codex JSONL events: https://developers.openai.com/codex/cli/reference/
+    switch (evt.type) {
+      case "message": {
+        if (evt.role === "assistant" && evt.content) {
+          const text = typeof evt.content === "string" ? evt.content : evt.content.map(b => b.text || "").join("");
+          if (text) {
+            setResult(text);
+            liveData.events.push({ type: "text", text });
+            liveData.lastText = text;
+          }
+        }
+        break;
+      }
+      case "function_call":
+      case "tool_call": {
+        liveData.events.push({
+          type: "tool_use",
+          name: evt.name || evt.function?.name || "unknown",
+          input: evt.arguments || evt.function?.arguments || {},
+          tool_use_id: evt.id || evt.call_id || "",
+        });
+        break;
+      }
+      case "function_call_output":
+      case "tool_call_output": {
+        const text = typeof evt.output === "string" ? evt.output : JSON.stringify(evt.output || "");
+        liveData.events.push({
+          type: "tool_result",
+          tool_use_id: evt.call_id || evt.id || "",
+          content: text.slice(0, 2000),
+          is_error: false,
+        });
+        break;
+      }
+    }
+  }
+
+  // ─── Unified dispatch ───
+
+  function runTask(taskId, prompt, turns, sessionId, cwd, runner) {
+    if (runner === "codex") {
+      runCodex(taskId, prompt, turns, sessionId, cwd);
+    } else {
+      runClaude(taskId, prompt, turns, sessionId, cwd);
+    }
   }
 
   function runClaudeSync(taskId, prompt, turns, sessionId, cwd) {
@@ -266,7 +358,6 @@ export function createClaudeRunner(config) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[shutdown] ${signal} received, aborting ${runningTasks.size} running task(s)...`);
-
     for (const [taskId, controller] of runningTasks.entries()) {
       const liveData = liveOutputs.get(taskId);
       const eventsJson = liveData?.events?.length > 0 ? JSON.stringify(liveData.events) : null;
@@ -277,10 +368,9 @@ export function createClaudeRunner(config) {
       controller.abort();
       console.log(`[shutdown] Aborted task ${taskId}`);
     }
-
     console.log(`[shutdown] ${runningTasks.size} task(s) will auto-resume on next startup`);
     setTimeout(() => process.exit(0), 1000);
   }
 
-  return { runClaude, runClaudeSync, cancelTask, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
+  return { runClaude, runCodex, runTask, runClaudeSync, cancelTask, runningPids, liveOutputs, resumeStaleTasks, gracefulShutdown };
 }
