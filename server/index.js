@@ -60,10 +60,11 @@ config.dbPath = config.dbPath || join(automationDir, "tasks.db");
 config.uploadsDir = config.uploadsDir || join(automationDir, "uploads");
 config.port = config.webhookServer?.port || config.port || 8080;
 
-// --- Kill any process holding our port (prevents EADDRINUSE crash loop) ---
+// --- Kill any process LISTENING on our port (prevents EADDRINUSE crash loop) ---
+// Uses -sTCP:LISTEN to only match servers, not clients (e.g. cloudflared connections)
 function killPortUser(port) {
   try {
-    const output = execSync(`lsof -ti :${port}`, { encoding: "utf-8", timeout: 5000 }).trim();
+    const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: "utf-8", timeout: 5000 }).trim();
     if (output) {
       const myPid = String(process.pid);
       for (const pid of output.split("\n")) {

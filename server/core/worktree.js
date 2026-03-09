@@ -208,7 +208,7 @@ curl -s -X POST ${API}/task/${taskId}/close
 
   function killPortUser(port) {
     try {
-      const output = execSync(`lsof -ti :${port}`, { encoding: "utf-8", timeout: 5000 }).trim();
+      const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: "utf-8", timeout: 5000 }).trim();
       if (output) {
         for (const pid of output.split("\n")) {
           try { process.kill(Number(pid), "SIGKILL"); } catch {}
