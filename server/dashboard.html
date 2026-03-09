@@ -475,6 +475,7 @@
           </select>
           <select id="detailReasoningSelect" title="推論レベル" style="display:none;max-width:90px;padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
           </select>
+          <button id="planModeBtn" onclick="togglePlanMode()" title="計画モード切替" style="padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">PLAN</button>
           <span class="spacer"></span>
           <button class="attach-btn" id="detailAttachBtn" onclick="document.getElementById('detailFileInput').click()">+</button>
           <button id="detailSendBtn" onclick="sendDetailReply()">返信</button>
@@ -499,6 +500,7 @@ let hasMore = true;
 let loadingMore = false;
 let selectedThreadId = null;
 let usersMap = {};
+const threadPlanMode = {}; // rootId → boolean
 let currentTab = 'active'; // 'active' or 'done'
 let doneCount = 0;
 let activeCount = 0;
@@ -1076,6 +1078,8 @@ function renderDetail(t) {
       replyInput.placeholder = '続きの指示... (Shift+Enterで改行)';
       attachBtn.style.display = '';
     }
+    // Plan mode button state
+    updatePlanModeBtn(t.id);
   } else {
     replyEl.style.display = 'none';
   }
@@ -1440,6 +1444,21 @@ function parseSlashCommand(text) {
   return { command: m[1].toLowerCase(), args: (m[2] || '').trim() };
 }
 
+// === Plan mode per-thread state ===
+function togglePlanMode() {
+  if (!selectedThreadId) return;
+  threadPlanMode[selectedThreadId] = !threadPlanMode[selectedThreadId];
+  updatePlanModeBtn(selectedThreadId);
+}
+function updatePlanModeBtn(rootId) {
+  const btn = document.getElementById('planModeBtn');
+  if (!btn) return;
+  const active = !!threadPlanMode[rootId];
+  btn.style.background = active ? '#1d4ed8' : 'transparent';
+  btn.style.color = active ? '#fff' : '#666';
+  btn.style.borderColor = active ? '#2563eb' : '#444';
+}
+
 async function sendTask() {
   if (sending) return;
   const input = document.getElementById('promptInput');
@@ -1475,6 +1494,7 @@ async function sendTask() {
     const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const result = await resp.json();
     if (result.id && pushSubscription) watchedThreads.add(result.id);
+    if (result.id && (slash?.command === 'plan' || slash?.command === 'p')) threadPlanMode[result.id] = true;
     input.value = ''; input.style.height = 'auto';
     branchInput.value = '';
     document.getElementById('branchInputRow').style.display = 'none';
@@ -1504,8 +1524,13 @@ async function sendDetailReply() {
       try { await compactThread(taskId); } catch (e) { alert('compact失敗: ' + e.message); }
       return;
     }
-    if ((slash.command === 'plan' || slash.command === 'p') && !slash.args) {
-      alert('使い方: /plan <メッセージ>'); return;
+    if (slash.command === 'plan' || slash.command === 'p') {
+      // /plan without args = toggle plan mode
+      if (!slash.args) {
+        togglePlanMode();
+        input.value = '';
+        return;
+      }
     }
   }
 
@@ -1517,11 +1542,13 @@ async function sendDetailReply() {
     const model = document.getElementById('detailModelSelect').value;
     const reasoning = replyRunner === 'codex' ? document.getElementById('detailReasoningSelect').value : '';
     const actualPrompt = (slash?.command === 'plan' || slash?.command === 'p') ? slash.args : (prompt || '添付ファイルを確認してください');
+    // Plan mode: from slash command or thread state
+    const isPlan = (slash?.command === 'plan' || slash?.command === 'p') || !!threadPlanMode[selectedThreadId];
     const body = { prompt: actualPrompt, runner: replyRunner };
     if (model) body.model = model;
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
-    if (slash?.command === 'plan' || slash?.command === 'p') body.planMode = true;
+    if (isPlan) body.planMode = true;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = ''; input.style.height = 'auto';
     detailReplyFiles.length = 0;
