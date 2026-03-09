@@ -469,6 +469,11 @@
         <div class="file-preview" id="detailFilePreview"></div>
         <textarea id="detailReplyInput" rows="1" placeholder="続きの指示... (Shift+Enterで改行)" autocomplete="off"></textarea>
         <div class="input-controls">
+          <select id="detailModelSelect" title="モデル選択" onchange="updateDetailReasoningSelect()" style="max-width:120px;padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+            <option value="">default</option>
+          </select>
+          <select id="detailReasoningSelect" title="推論レベル" style="display:none;max-width:90px;padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
+          </select>
           <span class="spacer"></span>
           <button class="attach-btn" id="detailAttachBtn" onclick="document.getElementById('detailFileInput').click()">+</button>
           <button id="detailSendBtn" onclick="sendDetailReply()">返信</button>
@@ -1037,6 +1042,7 @@ function renderDetail(t) {
     replyEl.dataset.taskId = last.id;
     // Root task (t) is the source of truth for the thread runner — no fallback
     replyEl.dataset.runner = t.runner;
+    updateDetailModelSelect(t.runner);
     if (runningId) {
       // Running: show cancel button, disable input
       sendBtn.textContent = 'キャンセル';
@@ -1387,6 +1393,32 @@ function updateReasoningSelect() {
 }
 loadModels();
 
+// Detail pane model/reasoning selects (mirrors list pane but uses thread's runner)
+function updateDetailModelSelect(runner) {
+  const sel = document.getElementById('detailModelSelect');
+  if (!sel) return;
+  const models = MODEL_OPTIONS[runner] || [];
+  sel.innerHTML = '<option value="">default</option>' + models.map(m => {
+    const slug = typeof m === 'string' ? m : m.slug;
+    return `<option value="${slug}">${slug}</option>`;
+  }).join('');
+  updateDetailReasoningSelect();
+}
+function updateDetailReasoningSelect() {
+  const sel = document.getElementById('detailReasoningSelect');
+  if (!sel) return;
+  const runner = document.getElementById('detailReply')?.dataset?.runner;
+  const modelSlug = document.getElementById('detailModelSelect').value;
+  if (runner !== 'codex') { sel.style.display = 'none'; return; }
+  const models = MODEL_OPTIONS.codex || [];
+  const model = models.find(m => (typeof m === 'string' ? m : m.slug) === (modelSlug || models[0]?.slug));
+  const levels = model?.reasoningLevels || [];
+  const defaultLevel = model?.defaultReasoning || 'medium';
+  if (levels.length === 0) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  sel.innerHTML = levels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('');
+}
+
 // === Send new task ===
 let sending = false;
 async function sendTask() {
@@ -1434,8 +1466,8 @@ async function sendDetailReply() {
     // Use thread's runner (inherited from dataset), not the list selector
     const replyRunner = document.getElementById('detailReply').dataset.runner;
     if (!replyRunner) { alert('runner が不明です。ページを更新してください。'); replyLock.active = false; return; }
-    const model = document.getElementById('modelSelect').value;
-    const reasoning = replyRunner === 'codex' ? document.getElementById('reasoningSelect').value : '';
+    const model = document.getElementById('detailModelSelect').value;
+    const reasoning = replyRunner === 'codex' ? document.getElementById('detailReasoningSelect').value : '';
     const body = { prompt: prompt || '添付ファイルを確認してください', runner: replyRunner };
     if (model) body.model = model;
     if (reasoning) body.reasoning = reasoning;
