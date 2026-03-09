@@ -13,7 +13,7 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: #0a0a0a; color: #e0e0e0;
-    min-height: 100dvh; min-height: 100vh; overflow: hidden;
+    min-height: 100dvh; min-height: 100vh; overflow: hidden; overscroll-behavior: none;
   }
 
   /* === Split Layout === */
@@ -82,7 +82,7 @@
   .list-tab.active { color: #e0e0e0; border-bottom-color: #60a5fa; }
   .list-tab .tab-count { font-weight: 400; color: #555; margin-left: 4px; }
 
-  .list-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .list-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; }
 
   /* Thread list item */
   .thread-item {
@@ -182,7 +182,7 @@
   .dev-logs-btn:hover { color: #aaa; }
   .dev-logs { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 6px; margin-top: 6px; padding: 8px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.7rem; color: #888; white-space: pre-wrap; word-break: break-all; }
 
-  .detail-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0; }
+  .detail-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; padding: 0; }
 
   /* Messages */
   .msg { padding: 12px 16px; border-bottom: 1px solid #141414; }
@@ -421,6 +421,20 @@
     color: #666; font-size: 1.2rem; cursor: pointer;
   }
   @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+  /* Pull-to-refresh indicator */
+  .ptr-indicator {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 0; overflow: hidden; transition: height 0.2s ease;
+    color: #666; font-size: 0.75rem; background: #0a0a10;
+  }
+  .ptr-indicator.pulling { transition: none; }
+  .ptr-indicator .ptr-arrow {
+    display: inline-block; transition: transform 0.2s;
+  }
+  .ptr-indicator.ready .ptr-arrow { transform: rotate(180deg); }
+  .ptr-indicator.refreshing .ptr-arrow { animation: ptrSpin 0.6s linear infinite; }
+  @keyframes ptrSpin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 </head>
@@ -453,6 +467,7 @@
       <div class="list-tab active" id="tabActive" onclick="switchTab('active')">Active<span class="tab-count" id="tabActiveCount"></span></div>
       <div class="list-tab" id="tabDone" onclick="switchTab('done')">Done<span class="tab-count" id="tabDoneCount"></span></div>
     </div>
+    <div class="ptr-indicator" id="listPtr"><span class="ptr-arrow">↓</span> <span class="ptr-text">引いて更新</span></div>
     <div class="list-body" id="listBody">
       <div class="empty">Loading...</div>
     </div>
@@ -495,6 +510,7 @@
       </div>
       <div id="detailDevBar"></div>
       <div id="detailSessionInfo"></div>
+      <div class="ptr-indicator" id="detailPtr"><span class="ptr-arrow">↓</span> <span class="ptr-text">引いて更新</span></div>
       <div class="detail-body" id="detailBody"></div>
       <div id="detailContextBar"></div>
       <div class="detail-reply" id="detailReply" style="display:none">
@@ -1192,14 +1208,10 @@ function startStream(taskId) {
         const prevCount = streamEventCounts.get(taskId) || 0;
         // Full re-render only if events changed significantly
         if (data.events.length !== prevCount) {
+          const wasAtBottom = isDetailAtBottom();
           el.innerHTML = renderEvents(data.events);
           streamEventCounts.set(taskId, data.events.length);
-          // Auto-scroll
-          const body = document.getElementById('detailBody');
-          if (body) {
-            const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 100;
-            if (atBottom) body.scrollTop = body.scrollHeight;
-          }
+          if (wasAtBottom) scrollDetailToBottom();
         }
         // Update running indicator
         const indEl = document.getElementById('running-ind-' + taskId);
@@ -1319,6 +1331,66 @@ document.getElementById('listBody').addEventListener('scroll', (e) => {
   if (loadingMore || !hasMore) return;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) loadNextPage();
 });
+
+// === Pull-to-refresh ===
+function setupPullToRefresh(scrollEl, indicatorEl, onRefresh) {
+  let startY = 0, pulling = false, ready = false;
+  const THRESHOLD = 60;
+
+  scrollEl.addEventListener('touchstart', (e) => {
+    if (scrollEl.scrollTop <= 0) {
+      startY = e.touches[0].clientY;
+      pulling = true;
+      ready = false;
+    }
+  }, { passive: true });
+
+  scrollEl.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy < 0) { indicatorEl.style.height = '0'; return; }
+    const h = Math.min(dy * 0.5, 80);
+    indicatorEl.style.height = h + 'px';
+    indicatorEl.classList.add('pulling');
+    indicatorEl.classList.remove('refreshing');
+    if (h >= THRESHOLD && !ready) {
+      ready = true;
+      indicatorEl.classList.add('ready');
+      indicatorEl.querySelector('.ptr-text').textContent = '離して更新';
+    } else if (h < THRESHOLD && ready) {
+      ready = false;
+      indicatorEl.classList.remove('ready');
+      indicatorEl.querySelector('.ptr-text').textContent = '引いて更新';
+    }
+  }, { passive: true });
+
+  scrollEl.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    pulling = false;
+    indicatorEl.classList.remove('pulling', 'ready');
+    if (ready) {
+      indicatorEl.classList.add('refreshing');
+      indicatorEl.querySelector('.ptr-text').textContent = '更新中...';
+      indicatorEl.style.height = '36px';
+      try { await onRefresh(); } catch {}
+      await new Promise(r => setTimeout(r, 300));
+    }
+    indicatorEl.classList.remove('refreshing');
+    indicatorEl.style.height = '0';
+    indicatorEl.querySelector('.ptr-text').textContent = '引いて更新';
+  });
+}
+
+setupPullToRefresh(
+  document.getElementById('listBody'),
+  document.getElementById('listPtr'),
+  refresh
+);
+setupPullToRefresh(
+  document.getElementById('detailBody'),
+  document.getElementById('detailPtr'),
+  refresh
+);
 
 // === File upload ===
 async function uploadFile(file) {
@@ -1626,9 +1698,22 @@ async function sendDetailReply() {
     input.value = ''; input.style.height = 'auto';
     detailReplyFiles.length = 0;
     renderDetailFilePreview();
+    // Scroll to bottom on send
+    scrollDetailToBottom();
     setTimeout(refresh, 500);
   } catch (e) { alert('送信失敗: ' + e.message); }
   finally { replyLock.active = false; }
+}
+
+// === Scroll helpers ===
+function scrollDetailToBottom() {
+  const body = document.getElementById('detailBody');
+  if (body) body.scrollTop = body.scrollHeight;
+}
+function isDetailAtBottom() {
+  const body = document.getElementById('detailBody');
+  if (!body) return false;
+  return body.scrollHeight - body.scrollTop - body.clientHeight < 100;
 }
 
 // === Plan approval actions ===
@@ -1645,8 +1730,8 @@ async function approvePlan() {
   if (model) body.model = model;
   try {
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    // Hide the approve buttons
-    document.querySelectorAll('.plan-card-actions').forEach(el => el.innerHTML = '<span style="color:#4ade80;font-size:0.75rem">✓ 承認済み — 実行中...</span>');
+    document.querySelectorAll('.plan-card-actions').forEach(el => el.innerHTML = '<span style="color:#4ade80;font-size:0.75rem">承認済み — 実行中...</span>');
+    scrollDetailToBottom();
     setTimeout(refresh, 500);
   } catch (e) { alert('承認失敗: ' + e.message); }
 }
