@@ -95,8 +95,8 @@ export function createClaudeRunner(config) {
       abortController,
       cwd: cwd || repoDir,
       // No maxTurns — let the agent run until done
-      permissionMode: opts.planMode ? "plan" : "bypassPermissions",
-      allowDangerouslySkipPermissions: !opts.planMode,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
       promptSuggestions: true,
       env: (() => { const e = { ...process.env, ...getGhToken() }; delete e.CLAUDECODE; return e; })(),
@@ -117,7 +117,7 @@ export function createClaudeRunner(config) {
 
       try {
         const effectivePrompt = opts.planMode
-          ? `[PLAN MODE] 以下のタスクについて実行計画を立ててください。コードの変更やファイル操作は行わず、何をどの順序で行うかの計画のみを提示してください。\n\n${prompt}`
+          ? `[PLAN MODE] 以下のタスクについて実行計画を立ててください。ファイルの読み取り・検索（Read, Grep, Glob）は自由に使って構いませんが、ファイルの編集・作成・削除（Edit, Write, Bash）は絶対に行わないでください。調査した上で、何をどの順序で行うかの計画のみを提示してください。\n\n${prompt}`
           : prompt;
         const conversation = query({ prompt: effectivePrompt, options: sdkOptions });
 
