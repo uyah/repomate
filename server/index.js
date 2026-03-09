@@ -2,10 +2,9 @@
 import dotenv from "dotenv";
 import { serve } from "@hono/node-server";
 import { createServer as createHttpServer } from "http";
-import { readFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
 import { createConnection } from "net";
 
 import { createApp } from "./core/app.js";
@@ -60,30 +59,45 @@ config.dbPath = config.dbPath || join(automationDir, "tasks.db");
 config.uploadsDir = config.uploadsDir || join(automationDir, "uploads");
 config.port = config.webhookServer?.port || config.port || 8080;
 
-// --- Kill any process LISTENING on our port (prevents EADDRINUSE crash loop) ---
-// Uses -sTCP:LISTEN to only match servers, not clients (e.g. cloudflared connections)
-function killPortUser(port) {
+// --- PID file management (safe alternative to port-based kill) ---
+const pidFile = join(automationDir, "server.pid");
+
+function killPreviousServer() {
   try {
-    const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: "utf-8", timeout: 5000 }).trim();
-    if (output) {
-      const myPid = String(process.pid);
-      for (const pid of output.split("\n")) {
-        if (pid.trim() === myPid) continue; // don't kill ourselves
-        try { process.kill(Number(pid), "SIGKILL"); } catch {}
+    if (!existsSync(pidFile)) return;
+    const oldPid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+    if (!oldPid || oldPid === process.pid) return;
+    try {
+      process.kill(oldPid, 0); // check if alive
+      process.kill(oldPid, "SIGTERM");
+      console.log(`[startup] Sent SIGTERM to previous server (pid ${oldPid})`);
+      // Give it a moment to release the port
+      const start = Date.now();
+      while (Date.now() - start < 3000) {
+        try { process.kill(oldPid, 0); } catch { break; } // process exited
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
       }
-      console.log(`[startup] Killed stale process(es) on port ${port}: ${output.replace(/\n/g, ", ")}`);
-    }
-  } catch {} // lsof returns exit code 1 when no matches — that's fine
+    } catch {} // process already dead
+  } catch {}
+}
+
+function writePidFile() {
+  writeFileSync(pidFile, String(process.pid));
+}
+
+function cleanupPidFile() {
+  try { unlinkSync(pidFile); } catch {}
 }
 
 // --- Start ---
 (async () => {
-  killPortUser(config.port);
+  killPreviousServer();
+  writePidFile();
 
   const { app, cleanup, worktrees, baseDomain } = await createApp(config);
 
-  process.on("SIGTERM", () => cleanup("SIGTERM"));
-  process.on("SIGINT", () => cleanup("SIGINT"));
+  process.on("SIGTERM", () => { cleanupPidFile(); cleanup("SIGTERM"); });
+  process.on("SIGINT", () => { cleanupPidFile(); cleanup("SIGINT"); });
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Webhook server running on http://localhost:${info.port}`);
