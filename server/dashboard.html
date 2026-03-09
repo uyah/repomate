@@ -731,13 +731,14 @@ function renderSingleTool(item) {
   const tid = 'tg-' + (toolToggleId++);
   const summary = esc(toolSummary(item.name, item.input));
   const resultStr = item.result || '';
-  const errorClass = item.is_error ? ' evt-tool-error' : '';
+  const isRealError = item.is_error && item.name !== 'ExitPlanMode';
+  const errorClass = isRealError ? ' evt-tool-error' : '';
   return `<div class="evt-group">
     <div class="evt-group-header" onclick="toggleTool('${tid}')">
       <span class="evt-toggle" id="${tid}-arrow">▶</span>
       <span class="evt-tool-name">${esc(item.name)}</span>
       <span class="evt-tool-summary">${summary}</span>
-      ${item.is_error ? '<span class="evt-tool-error">error</span>' : ''}
+      ${isRealError ? '<span class="evt-tool-error">error</span>' : ''}
     </div>
     <div class="evt-group-body" id="${tid}">
       ${item.input ? renderToolInput(item.name, item.input) : ''}
