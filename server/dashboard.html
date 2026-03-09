@@ -825,7 +825,8 @@ function getRunnerName(t) {
   const runner = initEvt?.runner || t.runner;
   const name = runner === 'codex' ? 'CODEX' : runner === 'claude' ? 'CLAUDE' : runner || '...';
   const model = initEvt?.model && initEvt.model !== '(default)' ? ` <span style="color:#666;font-size:0.7rem">model: ${initEvt.model}${initEvt.reasoning ? ' / ' + initEvt.reasoning : ''}</span>` : '';
-  return name + model;
+  const planBadge = initEvt?.planMode ? ' <span style="background:#2563eb;color:#fff;font-size:0.6rem;padding:1px 5px;border-radius:3px;vertical-align:middle">PLAN</span>' : '';
+  return name + planBadge + model;
 }
 
 function renderDetailMsg(t, isReply, isLast, opts) {
@@ -1432,6 +1433,13 @@ function updateDetailReasoningSelect() {
 
 // === Send new task ===
 let sending = false;
+// === Slash command parser ===
+function parseSlashCommand(text) {
+  const m = text.match(/^\/(\w+)\s*([\s\S]*)?$/);
+  if (!m) return null;
+  return { command: m[1].toLowerCase(), args: (m[2] || '').trim() };
+}
+
 async function sendTask() {
   if (sending) return;
   const input = document.getElementById('promptInput');
@@ -1439,6 +1447,16 @@ async function sendTask() {
   const branchInput = document.getElementById('branchInput');
   const prompt = input.value.trim();
   if (!prompt && pendingFiles.length === 0) return;
+
+  // Handle slash commands (new task context)
+  const slash = parseSlashCommand(prompt);
+  if (slash) {
+    if (slash.command === 'compact') { alert('/compact はスレッド内の返信でのみ使用できます'); return; }
+    if (slash.command === 'plan' || slash.command === 'p') {
+      if (!slash.args) { alert('使い方: /plan <メッセージ>'); return; }
+    }
+  }
+
   sending = true; btn.disabled = true;
   try {
     const files = pendingFiles.map(f => f.name);
@@ -1446,12 +1464,14 @@ async function sendTask() {
     const runner = document.getElementById('runnerSelect').value;
     const model = document.getElementById('modelSelect').value;
     const reasoning = runner === 'codex' ? document.getElementById('reasoningSelect').value : '';
-    const body = { prompt: prompt || '添付ファイルを確認してください', maxTurns: 30, runner };
+    const actualPrompt = (slash?.command === 'plan' || slash?.command === 'p') ? slash.args : (prompt || '添付ファイルを確認してください');
+    const body = { prompt: actualPrompt, maxTurns: 30, runner };
     if (model) body.model = model;
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
+    if (slash?.command === 'plan' || slash?.command === 'p') body.planMode = true;
     const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const result = await resp.json();
     if (result.id && pushSubscription) watchedThreads.add(result.id);
@@ -1475,6 +1495,20 @@ async function sendDetailReply() {
   const prompt = input.value.trim();
   const files = detailReplyFiles.map(f => f.name);
   if (!prompt && files.length === 0) return;
+
+  // Handle slash commands in reply context
+  const slash = parseSlashCommand(prompt);
+  if (slash) {
+    if (slash.command === 'compact' || slash.command === 'c') {
+      input.value = '';
+      try { await compactThread(taskId); } catch (e) { alert('compact失敗: ' + e.message); }
+      return;
+    }
+    if ((slash.command === 'plan' || slash.command === 'p') && !slash.args) {
+      alert('使い方: /plan <メッセージ>'); return;
+    }
+  }
+
   replyLock.active = true;
   try {
     // Use thread's runner (inherited from dataset), not the list selector
@@ -1482,10 +1516,12 @@ async function sendDetailReply() {
     if (!replyRunner) { alert('runner が不明です。ページを更新してください。'); replyLock.active = false; return; }
     const model = document.getElementById('detailModelSelect').value;
     const reasoning = replyRunner === 'codex' ? document.getElementById('detailReasoningSelect').value : '';
-    const body = { prompt: prompt || '添付ファイルを確認してください', runner: replyRunner };
+    const actualPrompt = (slash?.command === 'plan' || slash?.command === 'p') ? slash.args : (prompt || '添付ファイルを確認してください');
+    const body = { prompt: actualPrompt, runner: replyRunner };
     if (model) body.model = model;
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
+    if (slash?.command === 'plan' || slash?.command === 'p') body.planMode = true;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = ''; input.style.height = 'auto';
     detailReplyFiles.length = 0;

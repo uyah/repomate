@@ -95,8 +95,8 @@ export function createClaudeRunner(config) {
       abortController,
       cwd: cwd || repoDir,
       // No maxTurns — let the agent run until done
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      permissionMode: opts.planMode ? "plan" : "bypassPermissions",
+      allowDangerouslySkipPermissions: !opts.planMode,
       includePartialMessages: true,
       promptSuggestions: true,
       env: (() => { const e = { ...process.env, ...getGhToken() }; delete e.CLAUDECODE; return e; })(),
@@ -169,7 +169,7 @@ export function createClaudeRunner(config) {
             }
             case "system": {
               if (msg.subtype === "init") {
-                liveData.events.push({ type: "system", subtype: "init", model: msg.model, tools: msg.tools });
+                liveData.events.push({ type: "system", subtype: "init", model: msg.model, tools: msg.tools, planMode: opts.planMode || false });
               } else if (msg.subtype === "compact_boundary") {
                 liveData.events.push({ type: "system", subtype: "compact_boundary", pre_tokens: msg.compact_metadata?.pre_tokens });
               }
