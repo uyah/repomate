@@ -116,7 +116,10 @@ export function createClaudeRunner(config) {
       let usageData = null;
 
       try {
-        const conversation = query({ prompt, options: sdkOptions });
+        const effectivePrompt = opts.planMode
+          ? `[PLAN MODE] 以下のタスクについて実行計画を立ててください。コードの変更やファイル操作は行わず、何をどの順序で行うかの計画のみを提示してください。\n\n${prompt}`
+          : prompt;
+        const conversation = query({ prompt: effectivePrompt, options: sdkOptions });
 
         for await (const msg of conversation) {
           if (abortController.signal.aborted) break;
