@@ -307,7 +307,6 @@ export function registerRoutes(app, ctx) {
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
-    console.log(`[reply] runner=${runnerType}, sessionId=${sessionId}, cwd=${cwd ? "yes" : "no"}`);
     if (sessionId && cwd && runnerType !== "codex") {
       const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
       const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
@@ -318,7 +317,6 @@ export function registerRoutes(app, ctx) {
     }
     const user = getCfUser(c);
     insertTask(id, displayPrompt, { cwd, sessionId, parentId: original.id, rootId, user, runner: runnerType });
-    console.log(`[reply] Final: sessionId=${sessionId}, model=${model || "(default)"}`);
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
