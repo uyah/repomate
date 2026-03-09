@@ -1126,7 +1126,11 @@ function renderDetail(t) {
     replyEl.dataset.taskId = last.id;
     // Root task (t) is the source of truth for the thread runner — no fallback
     replyEl.dataset.runner = t.runner;
-    updateDetailModelSelect(t.runner);
+    // Restore model/reasoning from the last task's init event
+    const lastInitEvt = [...allTasks].reverse().flatMap(t => t.events || []).find(e => e.type === 'system' && e.subtype === 'init');
+    const lastModel = lastInitEvt?.model && lastInitEvt.model !== '(default)' ? lastInitEvt.model : '';
+    const lastReasoning = lastInitEvt?.reasoning || '';
+    updateDetailModelSelect(t.runner, lastModel, lastReasoning);
     if (runningId) {
       // Running: show cancel button, disable input
       sendBtn.textContent = 'キャンセル';
@@ -1536,7 +1540,7 @@ function updateReasoningSelect() {
 loadModels();
 
 // Detail pane model/reasoning selects (mirrors list pane but uses thread's runner)
-function updateDetailModelSelect(runner) {
+function updateDetailModelSelect(runner, initialModel, initialReasoning) {
   const sel = document.getElementById('detailModelSelect');
   if (!sel) return;
   const models = MODEL_OPTIONS[runner] || [];
@@ -1544,9 +1548,12 @@ function updateDetailModelSelect(runner) {
     const slug = typeof m === 'string' ? m : m.slug;
     return `<option value="${slug}">${slug}</option>`;
   }).join('');
-  updateDetailReasoningSelect();
+  if (initialModel && Array.from(sel.options).some(o => o.value === initialModel)) {
+    sel.value = initialModel;
+  }
+  updateDetailReasoningSelect(initialReasoning);
 }
-function updateDetailReasoningSelect() {
+function updateDetailReasoningSelect(initialReasoning) {
   const sel = document.getElementById('detailReasoningSelect');
   if (!sel) return;
   const runner = document.getElementById('detailReply')?.dataset?.runner;
@@ -1555,7 +1562,7 @@ function updateDetailReasoningSelect() {
   const models = MODEL_OPTIONS.codex || [];
   const model = models.find(m => (typeof m === 'string' ? m : m.slug) === (modelSlug || models[0]?.slug));
   const levels = model?.reasoningLevels || [];
-  const defaultLevel = model?.defaultReasoning || 'medium';
+  const defaultLevel = initialReasoning || model?.defaultReasoning || 'medium';
   if (levels.length === 0) { sel.style.display = 'none'; return; }
   sel.style.display = '';
   sel.innerHTML = levels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('');
