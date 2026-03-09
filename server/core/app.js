@@ -149,13 +149,15 @@ export async function createApp(config) {
   const pwaFiles = {
     "/sw.js": { path: join(serverDir, "sw.js"), mime: "application/javascript", noCache: true },
     "/manifest.json": { path: join(serverDir, "manifest.json"), mime: "application/manifest+json" },
+    "/icon-192.png": { path: join(serverDir, "icon-192.png"), mime: "image/png", binary: true },
+    "/icon-512.png": { path: join(serverDir, "icon-512.png"), mime: "image/png", binary: true },
     "/icon-192.svg": { path: join(serverDir, "icon-192.svg"), mime: "image/svg+xml" },
     "/icon-512.svg": { path: join(serverDir, "icon-512.svg"), mime: "image/svg+xml" },
   };
-  for (const [route, { path: filePath, mime, noCache }] of Object.entries(pwaFiles)) {
+  for (const [route, { path: filePath, mime, noCache, binary }] of Object.entries(pwaFiles)) {
     app.get(route, (c) => {
       try {
-        const content = readFileSync(filePath, "utf-8");
+        const content = readFileSync(filePath, binary ? undefined : "utf-8");
         const cc = noCache ? "no-cache, must-revalidate" : "public, max-age=86400";
         return new Response(content, { headers: { "Content-Type": mime, "Cache-Control": cc } });
       } catch {

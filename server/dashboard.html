@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Mac Mini Dashboard</title>
 <link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/icon-192.svg">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -364,11 +364,30 @@
 
   /* Session info */
   .session-info { font-size: 0.65rem; color: #444; font-family: monospace; padding: 2px 10px; }
+
+  /* iOS install banner */
+  .install-banner {
+    display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    background: #1a1a2a; border-top: 1px solid #2a2a3a; padding: 12px 16px;
+    font-size: 0.85rem; color: #e0e0e0; text-align: center;
+    animation: slideUp 0.3s ease;
+  }
+  .install-banner.show { display: block; }
+  .install-banner .close-banner {
+    position: absolute; top: 8px; right: 12px; background: none; border: none;
+    color: #666; font-size: 1.2rem; cursor: pointer;
+  }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 </head>
 <body>
 <div class="drop-overlay" id="dropOverlay">ファイルをドロップ</div>
+
+<div class="install-banner" id="installBanner">
+  <button class="close-banner" onclick="dismissInstall()">&times;</button>
+  <div>📲 ホーム画面に追加: <b>共有ボタン</b> → <b>ホーム画面に追加</b></div>
+</div>
 
 <div class="app">
   <!-- List Pane -->
@@ -1631,6 +1650,21 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 initPush();
+
+// === iOS Install Banner ===
+function showInstallBanner() {
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const dismissed = localStorage.getItem('install-banner-dismissed');
+  if (isIos && !isStandalone && !dismissed) {
+    document.getElementById('installBanner').classList.add('show');
+  }
+}
+function dismissInstall() {
+  document.getElementById('installBanner').classList.remove('show');
+  localStorage.setItem('install-banner-dismissed', Date.now().toString());
+}
+showInstallBanner();
 
 // === Init ===
 refresh().then(() => {
