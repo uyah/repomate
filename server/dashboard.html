@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Mac Mini Dashboard</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.svg">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -375,6 +377,7 @@
       <div class="list-header-row">
         <h1>Mac Mini</h1>
         <div style="display:flex;gap:6px;align-items:center">
+          <button id="notifBtn" class="refresh-btn" onclick="togglePush()" style="display:none" title="通知">🔔</button>
           <a href="/logs-viewer" style="color:#666;font-size:0.7rem;text-decoration:none;border:1px solid #2a2a2a;border-radius:6px;padding:3px 8px">Logs</a>
           <button class="refresh-btn" onclick="refresh()">更新</button>
         </div>
@@ -1578,6 +1581,56 @@ document.getElementById('detailReplyInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDetailReply(); }
 });
 document.getElementById('searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { searchQuery = e.target.value.trim(); currentPage = 1; refresh(); } });
+
+// === Push Notifications ===
+let pushSubscription = null;
+const notifBtn = document.getElementById('notifBtn');
+
+async function initPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const resp = await fetch('/push/vapid-key');
+    const { publicKey, enabled } = await resp.json();
+    if (!enabled || !publicKey) return;
+    notifBtn.style.display = '';
+    pushSubscription = await reg.pushManager.getSubscription();
+    updateNotifBtn();
+  } catch (e) { console.error('[push] init error:', e); }
+}
+
+function updateNotifBtn() {
+  notifBtn.textContent = pushSubscription ? '🔔' : '🔕';
+  notifBtn.title = pushSubscription ? '通知ON (タップでOFF)' : '通知OFF (タップでON)';
+}
+
+async function togglePush() {
+  try {
+    if (pushSubscription) {
+      await fetch('/push/unsubscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: pushSubscription.endpoint }) });
+      await pushSubscription.unsubscribe();
+      pushSubscription = null;
+    } else {
+      const resp = await fetch('/push/vapid-key');
+      const { publicKey } = await resp.json();
+      const reg = await navigator.serviceWorker.ready;
+      pushSubscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+      await fetch('/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pushSubscription.toJSON()) });
+    }
+    updateNotifBtn();
+  } catch (e) { console.error('[push] toggle error:', e); alert('通知の切り替えに失敗しました: ' + e.message); }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+initPush();
 
 // === Init ===
 refresh().then(() => {

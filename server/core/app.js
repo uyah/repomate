@@ -10,6 +10,7 @@ import { createClaudeRunner } from "./claude-runner.js";
 import { createWorktreeManager } from "./worktree.js";
 import { registerRoutes } from "./routes.js";
 import { getCfUser } from "../adapters/cloudflare-auth.js";
+import { createPushManager } from "./push.js";
 
 /**
  * Create the full Hono application with all modules wired together.
@@ -49,6 +50,9 @@ export async function createApp(config) {
     serverPort: config.port || 8080,
   });
 
+  // --- Initialize push notifications ---
+  const push = createPushManager(db);
+
   // --- Initialize Claude runner ---
   const runner = createClaudeRunner({
     stmts,
@@ -57,6 +61,7 @@ export async function createApp(config) {
     getGhToken: worktrees.getGhToken,
     repoDir,
     maxTurns,
+    push,
   });
 
   // --- Reverse proxy for dev server subdomains ---
@@ -115,7 +120,7 @@ export async function createApp(config) {
 
   // --- Register core routes ---
   const routeCtx = {
-    db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees,
+    db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, push,
     config: { uploadsDir, maxTurns, repoDir, port: config.port || 8080, devServer: config.devServer || null },
     getCfUser: cfUserHelper,
   };
@@ -138,6 +143,25 @@ export async function createApp(config) {
     deployProc.unref();
     return c.json({ deployed: true, message: "deploy.sh started" });
   });
+
+  // --- PWA static files ---
+  const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
+  const pwaFiles = {
+    "/sw.js": { path: join(serverDir, "sw.js"), mime: "application/javascript" },
+    "/manifest.json": { path: join(serverDir, "manifest.json"), mime: "application/manifest+json" },
+    "/icon-192.svg": { path: join(serverDir, "icon-192.svg"), mime: "image/svg+xml" },
+    "/icon-512.svg": { path: join(serverDir, "icon-512.svg"), mime: "image/svg+xml" },
+  };
+  for (const [route, { path: filePath, mime }] of Object.entries(pwaFiles)) {
+    app.get(route, (c) => {
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        return new Response(content, { headers: { "Content-Type": mime, "Cache-Control": "public, max-age=3600" } });
+      } catch {
+        return c.text("Not found", 404);
+      }
+    });
+  }
 
   // --- Dashboard route ---
   const serveDashboard = (c) => {

@@ -9,7 +9,7 @@ import { join, extname } from "path";
  * @param {object} ctx - { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, config, getCfUser }
  */
 export function registerRoutes(app, ctx) {
-  const { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, config, getCfUser } = ctx;
+  const { db, stmts, userStmts, taskToJson, resolveThreadRunner, runner, worktrees, push, config, getCfUser } = ctx;
   const { runTask, cancelTask, runningPids, liveOutputs } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, closeThread, startDevServer, stopDevServer, getDevServers, getDevServerLogs, WORKTREES_DIR } = worktrees;
   const UPLOADS_DIR = config.uploadsDir;
@@ -83,6 +83,25 @@ export function registerRoutes(app, ctx) {
   // Load in background — non-blocking
   setTimeout(loadModels, 100);
   app.get("/config/models", (c) => c.json(cachedModels));
+
+  // --- Push notifications ---
+  app.get("/push/vapid-key", (c) => {
+    return c.json({ publicKey: push.vapidPublicKey, enabled: push.isEnabled });
+  });
+
+  app.post("/push/subscribe", async (c) => {
+    const subscription = await c.req.json();
+    if (!subscription?.endpoint) return c.json({ error: "invalid subscription" }, 400);
+    push.subscribe(subscription);
+    return c.json({ ok: true });
+  });
+
+  app.post("/push/unsubscribe", async (c) => {
+    const { endpoint } = await c.req.json();
+    if (!endpoint) return c.json({ error: "endpoint required" }, 400);
+    push.unsubscribe(endpoint);
+    return c.json({ ok: true });
+  });
 
   // --- File upload ---
   app.post("/upload", async (c) => {

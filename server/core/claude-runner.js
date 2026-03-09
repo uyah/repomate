@@ -12,7 +12,7 @@ import { spawn, execSync } from "child_process";
  * @param {number} config.maxTurns - default max turns
  */
 export function createClaudeRunner(config) {
-  const { stmts, db, taskToJson, getGhToken, repoDir, maxTurns } = config;
+  const { stmts, db, taskToJson, getGhToken, repoDir, maxTurns, push } = config;
   /** @type {Map<string, AbortController>} */
   const runningTasks = new Map();
   /** @type {Map<string, {events: Array, lastText: string}>} */
@@ -56,6 +56,15 @@ export function createClaudeRunner(config) {
       stmts.updateCost.run(totalCostUsd, usageData ? JSON.stringify(usageData) : null, taskId);
     }
 
+    // Push notification
+    if (push?.isEnabled) {
+      const status = abortController.signal.aborted ? "cancelled" : lastErrorText ? "failed" : "completed";
+      const task = stmts.get.get(taskId);
+      const promptPreview = (task?.prompt || "").slice(0, 50);
+      const title = status === "completed" ? "Task completed" : status === "failed" ? "Task failed" : "Task cancelled";
+      const body = promptPreview + (promptPreview.length >= 50 ? "..." : "");
+      push.sendNotification(title, body, `/t/${taskId}`, `task-${taskId}`).catch(() => {});
+    }
   }
 
   async function sendCallback(taskId) {
