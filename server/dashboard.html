@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Mac Mini Dashboard</title>
@@ -26,26 +26,29 @@
     width: 380px; min-width: 300px; max-width: 480px;
     border-right: 1px solid #1a1a1a;
     display: flex; flex-direction: column; background: #0a0a0a;
+    padding-left: env(safe-area-inset-left);
   }
   .detail-pane {
     flex: 1; display: flex; flex-direction: column; background: #0d0d0d;
+    padding-right: env(safe-area-inset-right);
   }
   .detail-pane.empty-state { align-items: center; justify-content: center; }
   .detail-empty { color: #333; font-size: 1rem; }
 
   /* Mobile: detail overlays */
   @media (max-width: 768px) {
-    .list-pane { width: 100%; max-width: none; }
+    .list-pane { width: 100%; max-width: none; padding-right: env(safe-area-inset-right); }
     .detail-pane {
       position: fixed; inset: 0; z-index: 50;
       transform: translateX(100%); transition: transform 0.25s ease;
+      padding-left: env(safe-area-inset-left);
     }
     .detail-pane.open { transform: translateX(0); }
     .detail-pane.empty-state { display: none; }
   }
 
   /* === List Pane === */
-  .list-header { padding: 12px 14px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
+  .list-header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
   .list-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .list-header h1 { font-size: 1.1rem; color: #fff; }
   .status-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -134,7 +137,7 @@
   /* === Detail Pane === */
   .detail-header {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 16px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0;
+    padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top)); border-bottom: 1px solid #1a1a1a; flex-shrink: 0;
     background: #0d0d0d;
   }
   .detail-back { display: none; background: none; border: none; color: #60a5fa; font-size: 1.2rem; cursor: pointer; padding: 4px; }
@@ -952,6 +955,7 @@ function renderDetail(t) {
           <span class="dev-server-label">Dev Server:</span>
           <a class="dev-server-url" href="${devUrl}" target="_blank">${devUrl}</a>
           <button class="dev-logs-btn" onclick="toggleDevLogs('${lastTaskId}')">Logs</button>
+          <button class="dev-logs-btn" onclick="restartDevServer('${lastTaskId}')">リロード</button>
           <button class="dev-stop-btn" onclick="toggleDevServer('${lastTaskId}', false)">停止</button>
         </div>
         <div class="dev-logs" id="devLogs" style="display:none"></div>
@@ -1550,6 +1554,22 @@ async function toggleDevServer(taskId, start) {
   } catch (e) {
     devServerStarting.delete(rootId);
     alert('Dev server操作失敗: ' + e.message);
+  }
+}
+
+async function restartDevServer(taskId) {
+  try {
+    await fetch(API + '/task/' + taskId + '/dev-server', { method: 'DELETE' });
+    const thread = allThreads.find(t => t.id === taskId || t.replies?.some(r => r.id === taskId));
+    const rootId = thread?.id || taskId;
+    devServerStarting.add(rootId);
+    if (selectedThreadId) openThread(selectedThreadId);
+    const res = await fetch(API + '/task/' + taskId + '/dev-server', { method: 'POST' });
+    devServerStarting.delete(rootId);
+    if (!res.ok) { const data = await res.json(); alert(data.error || 'Dev serverリロード失敗'); return; }
+    setTimeout(refresh, 500);
+  } catch (e) {
+    alert('Dev serverリロード失敗: ' + e.message);
   }
 }
 
