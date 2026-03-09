@@ -47,6 +47,15 @@
     .detail-pane.empty-state { display: none; }
   }
 
+  /* PWA standalone: safe-area-inset already covers status bar, reduce base padding */
+  @media (display-mode: standalone) {
+    .list-header { padding-top: env(safe-area-inset-top); }
+    .detail-header { padding-top: env(safe-area-inset-top); }
+    .list-input { padding-bottom: env(safe-area-inset-bottom); }
+    .detail-reply { padding-bottom: env(safe-area-inset-bottom); }
+    .install-banner { padding-bottom: env(safe-area-inset-bottom); }
+  }
+
   /* === List Pane === */
   .list-header { padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top)); border-bottom: 1px solid #1a1a1a; flex-shrink: 0; }
   .list-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
