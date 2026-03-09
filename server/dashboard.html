@@ -443,6 +443,7 @@
         </select>
         <select id="reasoningSelect" title="推論レベル" style="display:none">
         </select>
+        <button id="mainPlanModeBtn" onclick="toggleMainPlanMode()" title="計画モード切替" style="padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">PLAN</button>
         <span class="spacer"></span>
         <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
@@ -1445,6 +1446,18 @@ function parseSlashCommand(text) {
 }
 
 // === Plan mode per-thread state ===
+let mainPlanMode = false;
+function toggleMainPlanMode() {
+  mainPlanMode = !mainPlanMode;
+  updateMainPlanModeBtn();
+}
+function updateMainPlanModeBtn() {
+  const btn = document.getElementById('mainPlanModeBtn');
+  if (!btn) return;
+  btn.style.background = mainPlanMode ? '#1d4ed8' : 'transparent';
+  btn.style.color = mainPlanMode ? '#fff' : '#666';
+  btn.style.borderColor = mainPlanMode ? '#2563eb' : '#444';
+}
 function togglePlanMode() {
   if (!selectedThreadId) return;
   threadPlanMode[selectedThreadId] = !threadPlanMode[selectedThreadId];
@@ -1472,9 +1485,11 @@ async function sendTask() {
   if (slash) {
     if (slash.command === 'compact') { alert('/compact はスレッド内の返信でのみ使用できます'); return; }
     if (slash.command === 'plan' || slash.command === 'p') {
-      if (!slash.args) { alert('使い方: /plan <メッセージ>'); return; }
+      if (!slash.args) { mainPlanMode = !mainPlanMode; updateMainPlanModeBtn(); return; }
     }
   }
+
+  const isPlan = (slash?.command === 'plan' || slash?.command === 'p') || mainPlanMode;
 
   sending = true; btn.disabled = true;
   try {
@@ -1490,17 +1505,22 @@ async function sendTask() {
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
-    if (slash?.command === 'plan' || slash?.command === 'p') body.planMode = true;
+    if (isPlan) body.planMode = true;
     const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const result = await resp.json();
     if (result.id && pushSubscription) watchedThreads.add(result.id);
-    if (result.id && (slash?.command === 'plan' || slash?.command === 'p')) threadPlanMode[result.id] = true;
+    if (result.id && isPlan) threadPlanMode[result.id] = true;
+    const newTaskId = result.id;
     input.value = ''; input.style.height = 'auto';
     branchInput.value = '';
     document.getElementById('branchInputRow').style.display = 'none';
     pendingFiles.length = 0;
     renderMainPreview();
-    setTimeout(refresh, 500);
+    // Refresh and open the new thread
+    setTimeout(async () => {
+      await refresh();
+      if (newTaskId) openThread(newTaskId);
+    }, 500);
   } catch (e) { alert('送信失敗: ' + e.message); }
   finally { sending = false; btn.disabled = false; }
 }
