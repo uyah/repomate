@@ -214,7 +214,8 @@ export function createClaudeRunner(config) {
 
     const codexModel = opts.model || null;
     const codexReasoning = opts.reasoning || null;
-    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", reasoning: codexReasoning, tools: [] });
+    const codexPlanMode = opts.planMode || false;
+    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", reasoning: codexReasoning, planMode: codexPlanMode, tools: [] });
 
     (async () => {
       let lastResultText = "";
@@ -234,7 +235,10 @@ export function createClaudeRunner(config) {
           // --cd is only valid for new sessions, not resume
           if (cwd || repoDir) args.push("--cd", cwd || repoDir);
         }
-        args.push(prompt);
+        const finalPrompt = codexPlanMode
+          ? `[PLAN MODE] Analyze the task and create a detailed implementation plan. Do NOT execute any file edits, writes, or bash commands. Only read files, search code, and think. Present your plan as a structured markdown document with steps, files to modify, and approach. End with "## Ready to implement" when done.\n\n${prompt}`
+          : prompt;
+        args.push(finalPrompt);
 
         const env = { ...process.env, ...getGhToken(), PATH: `/opt/homebrew/bin:${process.env.PATH}` };
         delete env.CLAUDECODE;
