@@ -331,14 +331,18 @@ export function registerRoutes(app, ctx) {
     // Look up session and cwd from the whole thread, not just the last task
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
+    console.log(`[reply] taskId=${c.req.param("id")} rootId=${rootId} original.session_id=${original.session_id} threadSession=${stmts.latestSessionInThread.get(rootId)?.session_id} cwd=${cwd} runner=${runnerType}`);
     // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
     if (sessionId && cwd && runnerType !== "codex") {
       const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
       const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
+      console.log(`[reply] Checking session file: ${sessionFile} exists=${existsSync(sessionFile)}`);
       if (!existsSync(sessionFile)) {
         console.log(`[reply] Session file not found for ${sessionId}, starting fresh`);
         sessionId = null;
       }
+    } else if (!sessionId) {
+      console.log(`[reply] No sessionId found for thread ${rootId}`);
     }
     const user = getCfUser(c);
     insertTask(id, displayPrompt, { cwd, sessionId, parentId: original.id, rootId, user, runner: runnerType });
