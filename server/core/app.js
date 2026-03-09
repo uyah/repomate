@@ -172,7 +172,7 @@ export async function createApp(config) {
       const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
       const dashboardPath = join(serverDir, "dashboard.html");
       const html = readFileSync(dashboardPath, "utf-8");
-      return c.html(html);
+      return c.html(html, 200, { "Cache-Control": "no-cache, no-store, must-revalidate" });
     } catch {
       return c.text("Dashboard not found", 404);
     }
