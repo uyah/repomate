@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { readFileSync, mkdirSync } from "fs";
+import { readFileSync, mkdirSync, statSync } from "fs";
+import { createHash } from "crypto";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
@@ -167,12 +168,24 @@ export async function createApp(config) {
   }
 
   // --- Dashboard route ---
+  const serverDir2 = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
+  const dashboardPath = join(serverDir2, "dashboard.html");
+  // Compute hash at startup for cache-busting
+  let dashboardHash = "";
+  try { dashboardHash = createHash("md5").update(readFileSync(dashboardPath)).digest("hex").slice(0, 8); } catch {}
+
+  app.get("/version", (c) => c.json({ hash: dashboardHash }));
+
   const serveDashboard = (c) => {
     try {
-      const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
-      const dashboardPath = join(serverDir, "dashboard.html");
-      const html = readFileSync(dashboardPath, "utf-8");
-      return c.html(html, 200, { "Cache-Control": "no-cache, no-store, must-revalidate" });
+      let html = readFileSync(dashboardPath, "utf-8");
+      // Inject version hash so client can detect stale cache
+      html = html.replace("</head>", `<meta name="app-version" content="${dashboardHash}"></head>`);
+      return c.html(html, 200, {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+      });
     } catch {
       return c.text("Dashboard not found", 404);
     }

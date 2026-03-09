@@ -1827,6 +1827,18 @@ refresh().then(() => {
   if (m) openThread(m[1]);
 });
 setInterval(() => { if (!streams.size) refresh(); }, 5000);
+
+// Auto-reload on version mismatch (catches stale iOS/Cloudflare cache)
+const MY_VERSION = document.querySelector('meta[name="app-version"]')?.content;
+if (MY_VERSION) {
+  setInterval(async () => {
+    try {
+      const r = await fetch(API + '/version', { cache: 'no-store' });
+      const { hash } = await r.json();
+      if (hash && hash !== MY_VERSION) location.reload();
+    } catch {}
+  }, 30000);
+}
 </script>
 </body>
 </html>

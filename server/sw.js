@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 
 // Activate immediately — don't wait for old tabs to close
 self.addEventListener('install', () => self.skipWaiting());
