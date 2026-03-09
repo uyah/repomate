@@ -342,6 +342,36 @@
   .meta-cost { color: #fbbf24; }
   .meta-tokens { color: #60a5fa; }
 
+  /* Plan approval card */
+  .plan-card {
+    margin: 8px 0; border: 1px solid #2563eb44; border-radius: 8px; background: #0d1520; overflow: hidden;
+  }
+  .plan-card-header {
+    padding: 8px 12px; background: #1a2744; font-size: 0.8rem; font-weight: 600; color: #60a5fa;
+    border-bottom: 1px solid #2563eb44;
+  }
+  .plan-card-icon { font-size: 1rem; }
+  .plan-card-body {
+    padding: 10px 14px; font-size: 0.8rem; color: #ccc; max-height: 400px; overflow-y: auto;
+    line-height: 1.5;
+  }
+  .plan-card-body h1, .plan-card-body h2, .plan-card-body h3 { color: #e0e0e0; margin: 8px 0 4px; }
+  .plan-card-body ul, .plan-card-body ol { padding-left: 20px; }
+  .plan-card-body code { background: #1a1a2a; padding: 1px 4px; border-radius: 3px; font-size: 0.75rem; }
+  .plan-card-actions {
+    display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #2563eb22; background: #0a1018;
+  }
+  .plan-btn {
+    padding: 6px 14px; border-radius: 6px; border: 1px solid #333; cursor: pointer;
+    font-size: 0.75rem; font-weight: 500; transition: all 0.15s;
+  }
+  .plan-approve { background: #16a34a22; color: #4ade80; border-color: #16a34a44; }
+  .plan-approve:hover { background: #16a34a44; }
+  .plan-reject { background: #dc262622; color: #f87171; border-color: #dc262644; }
+  .plan-reject:hover { background: #dc262644; }
+  .plan-feedback { background: #2563eb22; color: #60a5fa; border-color: #2563eb44; }
+  .plan-feedback:hover { background: #2563eb44; }
+
   /* Prompt suggestion */
   .evt-suggestion {
     margin: 6px 0; padding: 6px 10px; background: #111118; border: 1px dashed #2a2a4a;
@@ -727,7 +757,26 @@ function renderToolInput(name, input) {
   return `<div class="evt-detail-content">${esc(str.slice(0, 2000))}</div>`;
 }
 
+let _showPlanActions = false;
 function renderSingleTool(item) {
+  // ExitPlanMode: render as a plan approval card
+  if (item.name === 'ExitPlanMode') {
+    const planText = item.result || (item.input?.plan) || '';
+    const actionsHtml = _showPlanActions
+      ? `<div class="plan-card-actions">
+          <button class="plan-btn plan-approve" onclick="approvePlan()">承認して実行</button>
+          <button class="plan-btn plan-reject" onclick="rejectPlan()">却下</button>
+          <button class="plan-btn plan-feedback" onclick="feedbackPlan()">フィードバック</button>
+        </div>`
+      : `<div class="plan-card-actions"><span style="color:#4ade80;font-size:0.75rem">承認済み</span></div>`;
+    return `<div class="plan-card">
+      <div class="plan-card-header">
+        <span class="plan-card-icon">📋</span> 計画
+      </div>
+      <div class="plan-card-body">${renderMarkdown(planText)}</div>
+      ${actionsHtml}
+    </div>`;
+  }
   const tid = 'tg-' + (toolToggleId++);
   const summary = esc(toolSummary(item.name, item.input));
   const resultStr = item.result || '';
@@ -870,6 +919,7 @@ function renderDetailMsg(t, isReply, isLast, opts) {
   </div>`;
 
   if (t.status === 'running') {
+    _showPlanActions = false;
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div id="events-${t.id}">${t.events ? renderEvents(t.events) : ''}</div>
@@ -878,6 +928,8 @@ function renderDetailMsg(t, isReply, isLast, opts) {
     startStream(t.id);
   } else if (t.events && t.events.length > 0) {
     const retryable = ['failed','interrupted','cancelled','max_turns'].includes(t.status);
+    // Show plan approval buttons only on the last task that isn't running and thread isn't closed
+    _showPlanActions = isLast && !opts.closed && !opts.hasRunning;
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
       <div>${renderEvents(t.events)}</div>
@@ -1577,6 +1629,48 @@ async function sendDetailReply() {
     setTimeout(refresh, 500);
   } catch (e) { alert('送信失敗: ' + e.message); }
   finally { replyLock.active = false; }
+}
+
+// === Plan approval actions ===
+async function approvePlan() {
+  if (!selectedThreadId) return;
+  const taskId = document.getElementById('detailReply').dataset.taskId;
+  if (!taskId) return;
+  // Disable plan mode for the execution reply
+  threadPlanMode[selectedThreadId] = false;
+  updatePlanModeBtn(selectedThreadId);
+  const replyRunner = document.getElementById('detailReply').dataset.runner;
+  const model = document.getElementById('detailModelSelect').value;
+  const body = { prompt: 'Plan approved. Proceed with implementation.', runner: replyRunner };
+  if (model) body.model = model;
+  try {
+    await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    // Hide the approve buttons
+    document.querySelectorAll('.plan-card-actions').forEach(el => el.innerHTML = '<span style="color:#4ade80;font-size:0.75rem">✓ 承認済み — 実行中...</span>');
+    setTimeout(refresh, 500);
+  } catch (e) { alert('承認失敗: ' + e.message); }
+}
+
+function rejectPlan() {
+  if (!selectedThreadId) return;
+  const reason = prompt('却下理由（省略可）:');
+  if (reason === null) return; // cancelled
+  const taskId = document.getElementById('detailReply').dataset.taskId;
+  if (!taskId) return;
+  const replyRunner = document.getElementById('detailReply').dataset.runner;
+  const model = document.getElementById('detailModelSelect').value;
+  const body = { prompt: reason ? `Plan rejected. Reason: ${reason}` : 'Plan rejected. Please propose a different approach.', runner: replyRunner, planMode: true };
+  if (model) body.model = model;
+  fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(() => setTimeout(refresh, 500))
+    .catch(e => alert('却下失敗: ' + e.message));
+}
+
+function feedbackPlan() {
+  if (!selectedThreadId) return;
+  const input = document.getElementById('detailReplyInput');
+  input.focus();
+  input.placeholder = '計画へのフィードバックを入力...';
 }
 
 async function retryTask(taskId) {

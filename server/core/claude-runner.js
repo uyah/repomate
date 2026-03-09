@@ -96,7 +96,7 @@ export function createClaudeRunner(config) {
       cwd: cwd || repoDir,
       // No maxTurns — let the agent run until done
       permissionMode: opts.planMode ? "plan" : "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      allowDangerouslySkipPermissions: !opts.planMode,
       includePartialMessages: true,
       promptSuggestions: true,
       env: (() => { const e = { ...process.env, ...getGhToken() }; delete e.CLAUDECODE; return e; })(),
