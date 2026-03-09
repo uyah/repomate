@@ -103,24 +103,24 @@ export function registerRoutes(app, ctx) {
     return c.json({ ok: true });
   });
 
-  app.post("/push/mute", async (c) => {
+  app.post("/push/watch", async (c) => {
     const { endpoint, rootId } = await c.req.json();
     if (!endpoint || !rootId) return c.json({ error: "endpoint and rootId required" }, 400);
-    push.mute(endpoint, rootId);
+    push.watch(endpoint, rootId);
     return c.json({ ok: true });
   });
 
-  app.post("/push/unmute", async (c) => {
+  app.post("/push/unwatch", async (c) => {
     const { endpoint, rootId } = await c.req.json();
     if (!endpoint || !rootId) return c.json({ error: "endpoint and rootId required" }, 400);
-    push.unmute(endpoint, rootId);
+    push.unwatch(endpoint, rootId);
     return c.json({ ok: true });
   });
 
-  app.get("/push/mutes", async (c) => {
+  app.get("/push/watches", async (c) => {
     const endpoint = c.req.query("endpoint");
     if (!endpoint) return c.json({ error: "endpoint required" }, 400);
-    return c.json({ mutes: push.getMutes(endpoint) });
+    return c.json({ watches: push.getWatches(endpoint) });
   });
 
   // --- File upload ---
@@ -170,7 +170,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning, pushEndpoint } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -208,6 +208,11 @@ export function registerRoutes(app, ctx) {
       stmts.setThreadPr.run(prUrl, branch, id);
     }
     runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning });
+
+    // Auto-watch: creator's device gets notifications for this thread
+    if (pushEndpoint && push.isEnabled) {
+      push.watch(pushEndpoint, id);
+    }
 
     return c.json({ id, status: "accepted" }, 202);
   });

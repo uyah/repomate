@@ -2,24 +2,27 @@ import webpush from "web-push";
 
 /**
  * Create push notification manager.
+ * Opt-in model: only endpoints that "watch" a thread receive notifications.
+ * Auto-watch is triggered when a task is created with a push endpoint.
  * @param {import('better-sqlite3').Database} db
- * @returns {{ subscribe, unsubscribe, sendNotification, mute, unmute, getMutes, isEnabled, vapidPublicKey }}
  */
 export function createPushManager(db) {
   const vapidPublic = process.env.VAPID_PUBLIC_KEY;
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
   const vapidSubject = process.env.VAPID_SUBJECT || "mailto:admin@localhost";
 
+  const noop = { subscribe() {}, unsubscribe() {}, sendNotification() {}, watch() {}, unwatch() {}, getWatches() { return []; }, isWatching() { return false; }, isEnabled: false, vapidPublicKey: null };
   if (!vapidPublic || !vapidPrivate) {
     console.log("[push] VAPID keys not configured, push notifications disabled");
-    return { subscribe() {}, unsubscribe() {}, sendNotification() {}, mute() {}, unmute() {}, getMutes() { return []; }, isEnabled: false, vapidPublicKey: null };
+    return noop;
   }
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
-  // Mute table (per-endpoint × per-thread)
+  // Migrate: drop old mutes table if exists, create watches table
+  try { db.exec(`DROP TABLE IF EXISTS push_mutes`); } catch {}
   db.exec(`
-    CREATE TABLE IF NOT EXISTS push_mutes (
+    CREATE TABLE IF NOT EXISTS push_watches (
       endpoint TEXT NOT NULL,
       root_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -31,11 +34,12 @@ export function createPushManager(db) {
     insert: db.prepare(`INSERT OR REPLACE INTO push_subscriptions (endpoint, keys_json, created_at) VALUES (?, ?, ?)`),
     delete: db.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ?`),
     all: db.prepare(`SELECT * FROM push_subscriptions`),
-    // Mute
-    mute: db.prepare(`INSERT OR REPLACE INTO push_mutes (endpoint, root_id, created_at) VALUES (?, ?, ?)`),
-    unmute: db.prepare(`DELETE FROM push_mutes WHERE endpoint = ? AND root_id = ?`),
-    getMutes: db.prepare(`SELECT root_id FROM push_mutes WHERE endpoint = ?`),
-    isMuted: db.prepare(`SELECT 1 FROM push_mutes WHERE endpoint = ? AND root_id = ?`),
+    // Watches (opt-in)
+    watch: db.prepare(`INSERT OR REPLACE INTO push_watches (endpoint, root_id, created_at) VALUES (?, ?, ?)`),
+    unwatch: db.prepare(`DELETE FROM push_watches WHERE endpoint = ? AND root_id = ?`),
+    getWatches: db.prepare(`SELECT root_id FROM push_watches WHERE endpoint = ?`),
+    isWatching: db.prepare(`SELECT 1 FROM push_watches WHERE endpoint = ? AND root_id = ?`),
+    watchersForThread: db.prepare(`SELECT endpoint FROM push_watches WHERE root_id = ?`),
   };
 
   function subscribe(subscription) {
@@ -47,27 +51,36 @@ export function createPushManager(db) {
     stmts.delete.run(endpoint);
   }
 
-  function mute(endpoint, rootId) {
-    stmts.mute.run(endpoint, rootId, new Date().toISOString());
+  function watch(endpoint, rootId) {
+    stmts.watch.run(endpoint, rootId, new Date().toISOString());
   }
 
-  function unmute(endpoint, rootId) {
-    stmts.unmute.run(endpoint, rootId);
+  function unwatch(endpoint, rootId) {
+    stmts.unwatch.run(endpoint, rootId);
   }
 
-  function getMutes(endpoint) {
-    return stmts.getMutes.all(endpoint).map(r => r.root_id);
+  function getWatches(endpoint) {
+    return stmts.getWatches.all(endpoint).map(r => r.root_id);
+  }
+
+  function isWatching(endpoint, rootId) {
+    return !!stmts.isWatching.get(endpoint, rootId);
   }
 
   async function sendNotification(title, body, url, tag, rootId) {
-    const subs = stmts.all.all();
-    if (subs.length === 0) return;
-    const payload = JSON.stringify({ title, body, url, tag, threadId: rootId });
-    let sent = 0;
-    for (const sub of subs) {
-      // Skip if this endpoint has muted this thread
-      if (rootId && stmts.isMuted.get(sub.endpoint, rootId)) continue;
+    if (!rootId) return;
+    // Only send to endpoints watching this thread
+    const watchers = stmts.watchersForThread.all(rootId);
+    if (watchers.length === 0) return;
 
+    const allSubs = stmts.all.all();
+    const subMap = new Map(allSubs.map(s => [s.endpoint, s]));
+    const payload = JSON.stringify({ title, body, url, tag, threadId: rootId });
+
+    let sent = 0;
+    for (const { endpoint } of watchers) {
+      const sub = subMap.get(endpoint);
+      if (!sub) continue; // watcher's subscription expired
       const pushSub = { endpoint: sub.endpoint, keys: JSON.parse(sub.keys_json) };
       try {
         await webpush.sendNotification(pushSub, payload);
@@ -81,9 +94,9 @@ export function createPushManager(db) {
         }
       }
     }
-    if (sent > 0) console.log(`[push] Sent "${title}" to ${sent} subscriber(s)`);
+    if (sent > 0) console.log(`[push] Sent "${title}" to ${sent} watcher(s)`);
   }
 
   console.log(`[push] Enabled with ${stmts.all.all().length} subscription(s)`);
-  return { subscribe, unsubscribe, sendNotification, mute, unmute, getMutes, isEnabled: true, vapidPublicKey: vapidPublic };
+  return { subscribe, unsubscribe, sendNotification, watch, unwatch, getWatches, isWatching, isEnabled: true, vapidPublicKey: vapidPublic };
 }

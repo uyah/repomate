@@ -459,7 +459,7 @@
       <div class="detail-header">
         <button class="detail-back" onclick="closeDetail()">&larr;</button>
         <div class="detail-title" id="detailTitle"></div>
-        <button id="threadMuteBtn" onclick="toggleThreadMute(this.dataset.rootId)" style="display:none;background:none;border:none;font-size:1rem;cursor:pointer;padding:4px" title="通知">🔔</button>
+        <button id="threadMuteBtn" onclick="toggleThreadWatch(this.dataset.rootId)" style="display:none;background:none;border:none;font-size:1rem;cursor:pointer;padding:4px" title="通知">🔕</button>
         <div class="detail-actions" id="detailActions"></div>
       </div>
       <div id="detailDevBar"></div>
@@ -917,12 +917,12 @@ function renderDetail(t) {
   const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '').trim().slice(0, 60);
   document.getElementById('detailTitle').textContent = prompt || '(タスク)';
 
-  // Thread mute button
+  // Thread watch button (opt-in notifications)
   const muteBtn = document.getElementById('threadMuteBtn');
   if (pushSubscription) {
     muteBtn.style.display = '';
     muteBtn.dataset.rootId = t.id;
-    updateThreadMuteBtn(t.id);
+    updateThreadWatchBtn(t.id);
   } else {
     muteBtn.style.display = 'none';
   }
@@ -1451,6 +1451,7 @@ async function sendTask() {
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
+    if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
     await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = ''; input.style.height = 'auto';
     branchInput.value = '';
@@ -1688,7 +1689,7 @@ async function initPush() {
     notifBtn.style.display = '';
     pushSubscription = await reg.pushManager.getSubscription();
     updateNotifBtn();
-    if (pushSubscription) loadMutes();
+    if (pushSubscription) loadWatches();
   } catch (e) { console.error('[push] init error:', e); }
 }
 
@@ -1709,7 +1710,7 @@ async function togglePush() {
       const reg = await navigator.serviceWorker.ready;
       pushSubscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
       await fetch('/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pushSubscription.toJSON()) });
-      loadMutes();
+      loadWatches();
     }
     updateNotifBtn();
   } catch (e) { console.error('[push] toggle error:', e); alert('通知の切り替えに失敗しました: ' + e.message); }
@@ -1748,38 +1749,38 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
   }
 });
 
-// === Per-thread mute ===
-let mutedThreads = new Set();
+// === Per-thread watch (opt-in notifications) ===
+let watchedThreads = new Set();
 
-async function loadMutes() {
+async function loadWatches() {
   if (!pushSubscription) return;
   try {
-    const resp = await fetch('/push/mutes?endpoint=' + encodeURIComponent(pushSubscription.endpoint));
-    const { mutes } = await resp.json();
-    mutedThreads = new Set(mutes || []);
+    const resp = await fetch('/push/watches?endpoint=' + encodeURIComponent(pushSubscription.endpoint));
+    const { watches } = await resp.json();
+    watchedThreads = new Set(watches || []);
   } catch {}
 }
 
-async function toggleThreadMute(rootId) {
+async function toggleThreadWatch(rootId) {
   if (!pushSubscription) { alert('通知が有効になっていません'); return; }
   const endpoint = pushSubscription.endpoint;
-  const isMuted = mutedThreads.has(rootId);
+  const isWatching = watchedThreads.has(rootId);
   try {
-    await fetch(isMuted ? '/push/unmute' : '/push/mute', {
+    await fetch(isWatching ? '/push/unwatch' : '/push/watch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint, rootId })
     });
-    if (isMuted) mutedThreads.delete(rootId); else mutedThreads.add(rootId);
-    updateThreadMuteBtn(rootId);
-  } catch (e) { alert('ミュート切り替え失敗: ' + e.message); }
+    if (isWatching) watchedThreads.delete(rootId); else watchedThreads.add(rootId);
+    updateThreadWatchBtn(rootId);
+  } catch (e) { alert('通知切り替え失敗: ' + e.message); }
 }
 
-function updateThreadMuteBtn(rootId) {
+function updateThreadWatchBtn(rootId) {
   const btn = document.getElementById('threadMuteBtn');
   if (!btn) return;
-  const isMuted = mutedThreads.has(rootId);
-  btn.textContent = isMuted ? '🔕' : '🔔';
-  btn.title = isMuted ? '通知ミュート中 (タップで解除)' : '通知ON (タップでミュート)';
+  const isWatching = watchedThreads.has(rootId);
+  btn.textContent = isWatching ? '🔔' : '🔕';
+  btn.title = isWatching ? '通知ON (タップでOFF)' : '通知OFF (タップでON)';
 }
 
 // === Init ===
