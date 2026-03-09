@@ -12,7 +12,8 @@ import { createApp } from "./core/app.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// --- Load .env ---
+// --- Load .env (cwd first, then package root — first match wins in dotenv) ---
+dotenv.config();
 dotenv.config({ path: join(__dirname, "..", ".env") });
 
 // --- Global error handlers ---
