@@ -306,8 +306,8 @@ export function registerRoutes(app, ctx) {
     // Look up session and cwd from the whole thread, not just the last task
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
-    // Verify session file exists on disk (may have been deleted by rollback)
-    if (sessionId && cwd) {
+    // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
+    if (sessionId && cwd && runnerType !== "codex") {
       const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
       const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
       if (!existsSync(sessionFile)) {
@@ -401,8 +401,9 @@ export function registerRoutes(app, ctx) {
 
     const cwd = original.cwd || stmts.latestCwdInThread.get(rootId)?.cwd || null;
     let sessionId = original.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
-    // Verify session file exists on disk (may have been deleted by rollback)
-    if (sessionId && cwd) {
+    // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
+    const taskRunner = resolveThreadRunner(original, rootId);
+    if (sessionId && cwd && taskRunner !== "codex") {
       const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
       const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
       if (!existsSync(sessionFile)) {
@@ -410,7 +411,6 @@ export function registerRoutes(app, ctx) {
         sessionId = null;
       }
     }
-    const taskRunner = resolveThreadRunner(original, rootId);
     if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
 
     const id = randomUUID().slice(0, 8);
@@ -551,10 +551,14 @@ export function registerRoutes(app, ctx) {
     const result = stmts.deleteAfter.run(rootId, task.id, task.id);
 
     // Truncate Claude session JSONL to the rollback point (preserves context, removes bad turns)
+    // Note: Codex sessions are managed in ~/.codex/state_5.sqlite and can't be truncated this way.
+    // For Codex, rollback only deletes DB records; the Codex thread retains full history but
+    // the next resume will include the new prompt which effectively redirects the conversation.
+    const threadRunner = resolveThreadRunner(task, rootId);
     const cwd = task.cwd || stmts.latestCwdInThread.get(rootId)?.cwd;
     const sessionId = task.session_id || stmts.latestSessionInThread.get(rootId)?.session_id || null;
     let sessionTruncated = false;
-    if (cwd && sessionId && cutoffTime) {
+    if (threadRunner !== "codex" && cwd && sessionId && cutoffTime) {
       try {
         const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
         const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId + ".jsonl");

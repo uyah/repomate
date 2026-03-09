@@ -228,9 +228,9 @@ export function createClaudeRunner(config) {
         }
         args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
         if (codexReasoning) args.push("-c", `reasoning_effort="${codexReasoning}"`);
+        if (codexModel) args.push("-m", codexModel);
         if (!sessionId) {
-          // --cd and -m are only valid for new sessions, not resume
-          if (codexModel) args.push("-m", codexModel);
+          // --cd is only valid for new sessions, not resume
           if (cwd || repoDir) args.push("--cd", cwd || repoDir);
         }
         args.push(prompt);
