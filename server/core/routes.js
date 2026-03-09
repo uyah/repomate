@@ -334,8 +334,8 @@ export function registerRoutes(app, ctx) {
     console.log(`[reply] taskId=${c.req.param("id")} rootId=${rootId} original.session_id=${original.session_id} threadSession=${stmts.latestSessionInThread.get(rootId)?.session_id} cwd=${cwd} runner=${runnerType}`);
     // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
     if (sessionId && cwd && runnerType !== "codex") {
-      const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
-      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
+      const cwdSlug = cwd.replace(/\//g, "-");
+      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId + ".jsonl");
       console.log(`[reply] Checking session file: ${sessionFile} exists=${existsSync(sessionFile)}`);
       if (!existsSync(sessionFile)) {
         console.log(`[reply] Session file not found for ${sessionId}, starting fresh`);
@@ -433,8 +433,8 @@ export function registerRoutes(app, ctx) {
     // Verify session exists (Claude: check JSONL file; Codex: trust DB — sessions are in ~/.codex/state_5.sqlite)
     const taskRunner = resolveThreadRunner(original, rootId);
     if (sessionId && cwd && taskRunner !== "codex") {
-      const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
-      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId);
+      const cwdSlug = cwd.replace(/\//g, "-");
+      const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId + ".jsonl");
       if (!existsSync(sessionFile)) {
         console.log(`[retry] Session file not found for ${sessionId}, starting fresh`);
         sessionId = null;
@@ -589,7 +589,7 @@ export function registerRoutes(app, ctx) {
     let sessionTruncated = false;
     if (threadRunner !== "codex" && cwd && sessionId && cutoffTime) {
       try {
-        const cwdSlug = cwd.replace(/\//g, "-").replace(/^-/, "");
+        const cwdSlug = cwd.replace(/\//g, "-");
         const sessionFile = join(process.env.HOME || "/tmp", ".claude", "projects", cwdSlug, sessionId + ".jsonl");
         if (existsSync(sessionFile)) {
           const content = readFileSync(sessionFile, "utf-8");
