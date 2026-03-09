@@ -459,6 +459,7 @@
       <div class="detail-header">
         <button class="detail-back" onclick="closeDetail()">&larr;</button>
         <div class="detail-title" id="detailTitle"></div>
+        <button id="threadMuteBtn" onclick="toggleThreadMute(this.dataset.rootId)" style="display:none;background:none;border:none;font-size:1rem;cursor:pointer;padding:4px" title="通知">🔔</button>
         <div class="detail-actions" id="detailActions"></div>
       </div>
       <div id="detailDevBar"></div>
@@ -915,6 +916,16 @@ function renderDetail(t) {
   // Title
   const prompt = t.prompt.replace(/\/files\/[a-zA-Z0-9._-]+/g, '').trim().slice(0, 60);
   document.getElementById('detailTitle').textContent = prompt || '(タスク)';
+
+  // Thread mute button
+  const muteBtn = document.getElementById('threadMuteBtn');
+  if (pushSubscription) {
+    muteBtn.style.display = '';
+    muteBtn.dataset.rootId = t.id;
+    updateThreadMuteBtn(t.id);
+  } else {
+    muteBtn.style.display = 'none';
+  }
 
   // Action buttons (top-right: PR/changes/Done — NOT cancel)
   const hasRunning = t.status === 'running' || t.replies?.some(r => r.status === 'running');
@@ -1677,6 +1688,7 @@ async function initPush() {
     notifBtn.style.display = '';
     pushSubscription = await reg.pushManager.getSubscription();
     updateNotifBtn();
+    if (pushSubscription) loadMutes();
   } catch (e) { console.error('[push] init error:', e); }
 }
 
@@ -1697,6 +1709,7 @@ async function togglePush() {
       const reg = await navigator.serviceWorker.ready;
       pushSubscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
       await fetch('/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pushSubscription.toJSON()) });
+      loadMutes();
     }
     updateNotifBtn();
   } catch (e) { console.error('[push] toggle error:', e); alert('通知の切り替えに失敗しました: ' + e.message); }
@@ -1727,6 +1740,47 @@ function dismissInstall() {
   localStorage.setItem('install-banner-dismissed', Date.now().toString());
 }
 showInstallBanner();
+
+// === Service Worker message listener (notification click → open thread) ===
+navigator.serviceWorker?.addEventListener('message', (event) => {
+  if (event.data?.type === 'open-thread' && event.data.threadId) {
+    openThread(event.data.threadId);
+  }
+});
+
+// === Per-thread mute ===
+let mutedThreads = new Set();
+
+async function loadMutes() {
+  if (!pushSubscription) return;
+  try {
+    const resp = await fetch('/push/mutes?endpoint=' + encodeURIComponent(pushSubscription.endpoint));
+    const { mutes } = await resp.json();
+    mutedThreads = new Set(mutes || []);
+  } catch {}
+}
+
+async function toggleThreadMute(rootId) {
+  if (!pushSubscription) { alert('通知が有効になっていません'); return; }
+  const endpoint = pushSubscription.endpoint;
+  const isMuted = mutedThreads.has(rootId);
+  try {
+    await fetch(isMuted ? '/push/unmute' : '/push/mute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint, rootId })
+    });
+    if (isMuted) mutedThreads.delete(rootId); else mutedThreads.add(rootId);
+    updateThreadMuteBtn(rootId);
+  } catch (e) { alert('ミュート切り替え失敗: ' + e.message); }
+}
+
+function updateThreadMuteBtn(rootId) {
+  const btn = document.getElementById('threadMuteBtn');
+  if (!btn) return;
+  const isMuted = mutedThreads.has(rootId);
+  btn.textContent = isMuted ? '🔕' : '🔔';
+  btn.title = isMuted ? '通知ミュート中 (タップで解除)' : '通知ON (タップでミュート)';
+}
 
 // === Init ===
 refresh().then(() => {

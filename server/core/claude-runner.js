@@ -63,7 +63,8 @@ export function createClaudeRunner(config) {
       const promptPreview = (task?.prompt || "").slice(0, 50);
       const title = status === "completed" ? "Task completed" : status === "failed" ? "Task failed" : "Task cancelled";
       const body = promptPreview + (promptPreview.length >= 50 ? "..." : "");
-      push.sendNotification(title, body, `/t/${taskId}`, `task-${taskId}`).catch(() => {});
+      const rootId = task?.root_id || task?.id || taskId;
+      push.sendNotification(title, body, `/t/${rootId}`, `task-${taskId}`, rootId).catch(() => {});
     }
   }
 

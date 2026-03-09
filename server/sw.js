@@ -18,7 +18,7 @@ self.addEventListener('push', (event) => {
       icon: '/icon-192.svg',
       badge: '/icon-192.svg',
       tag: data.tag || 'task-update',
-      data: { url: data.url || '/' },
+      data: { url: data.url || '/', threadId: data.threadId || null },
     })
   );
 });
@@ -26,11 +26,19 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification.data?.url || '/';
+  const threadId = event.notification.data?.threadId;
   event.waitUntil(
-    clients.matchAll({ type: 'window' }).then((windowClients) => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Find an existing dashboard window and navigate it
       for (const client of windowClients) {
-        if (client.url.includes(url) && 'focus' in client) return client.focus();
+        if ('focus' in client) {
+          return client.focus().then(() => {
+            client.postMessage({ type: 'open-thread', threadId, url });
+            return client;
+          });
+        }
       }
+      // No existing window — open new one
       return clients.openWindow(url);
     })
   );

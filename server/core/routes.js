@@ -103,6 +103,26 @@ export function registerRoutes(app, ctx) {
     return c.json({ ok: true });
   });
 
+  app.post("/push/mute", async (c) => {
+    const { endpoint, rootId } = await c.req.json();
+    if (!endpoint || !rootId) return c.json({ error: "endpoint and rootId required" }, 400);
+    push.mute(endpoint, rootId);
+    return c.json({ ok: true });
+  });
+
+  app.post("/push/unmute", async (c) => {
+    const { endpoint, rootId } = await c.req.json();
+    if (!endpoint || !rootId) return c.json({ error: "endpoint and rootId required" }, 400);
+    push.unmute(endpoint, rootId);
+    return c.json({ ok: true });
+  });
+
+  app.get("/push/mutes", async (c) => {
+    const endpoint = c.req.query("endpoint");
+    if (!endpoint) return c.json({ error: "endpoint required" }, 400);
+    return c.json({ mutes: push.getMutes(endpoint) });
+  });
+
   // --- File upload ---
   app.post("/upload", async (c) => {
     const contentType = c.req.header("content-type") || "";
