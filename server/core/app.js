@@ -147,16 +147,17 @@ export async function createApp(config) {
   // --- PWA static files ---
   const serverDir = config.serverDir || join(dirname(fileURLToPath(import.meta.url)), "..");
   const pwaFiles = {
-    "/sw.js": { path: join(serverDir, "sw.js"), mime: "application/javascript" },
+    "/sw.js": { path: join(serverDir, "sw.js"), mime: "application/javascript", noCache: true },
     "/manifest.json": { path: join(serverDir, "manifest.json"), mime: "application/manifest+json" },
     "/icon-192.svg": { path: join(serverDir, "icon-192.svg"), mime: "image/svg+xml" },
     "/icon-512.svg": { path: join(serverDir, "icon-512.svg"), mime: "image/svg+xml" },
   };
-  for (const [route, { path: filePath, mime }] of Object.entries(pwaFiles)) {
+  for (const [route, { path: filePath, mime, noCache }] of Object.entries(pwaFiles)) {
     app.get(route, (c) => {
       try {
         const content = readFileSync(filePath, "utf-8");
-        return new Response(content, { headers: { "Content-Type": mime, "Cache-Control": "public, max-age=3600" } });
+        const cc = noCache ? "no-cache, must-revalidate" : "public, max-age=86400";
+        return new Response(content, { headers: { "Content-Type": mime, "Cache-Control": cc } });
       } catch {
         return c.text("Not found", 404);
       }
