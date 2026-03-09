@@ -1452,7 +1452,9 @@ async function sendTask() {
     if (files.length > 0) body.files = files;
     if (branch) body.branch = branch;
     if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
-    await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const result = await resp.json();
+    if (result.id && pushSubscription) watchedThreads.add(result.id);
     input.value = ''; input.style.height = 'auto';
     branchInput.value = '';
     document.getElementById('branchInputRow').style.display = 'none';
