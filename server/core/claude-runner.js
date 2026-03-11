@@ -1,6 +1,34 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { spawn, execSync } from "child_process";
 
+export const CODEX_DONE_MARKER = "[[TASK_DONE]]";
+
+export function codexResultHasDoneMarker(text = "") {
+  return text.includes(CODEX_DONE_MARKER);
+}
+
+export function stripCodexDoneMarker(text = "") {
+  return text.replaceAll(CODEX_DONE_MARKER, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function buildCodexPrompt(prompt) {
+  return `${prompt}
+
+IMPORTANT:
+- この依頼が完了したと判断した場合のみ、最終メッセージの末尾に ${CODEX_DONE_MARKER} を単独行で出力すること。
+- まだ作業が残っている場合は ${CODEX_DONE_MARKER} を出力しないこと。
+- 作業途中で区切りの良い所まで進んでも、未完了なら終了扱いにしないこと。`;
+}
+
+export function buildCodexContinuationPrompt() {
+  return `前回の続きから作業を継続してください。
+
+IMPORTANT:
+- まだ作業が完了していない前提で進めること。
+- この依頼が完全に終わった場合のみ、最終メッセージの末尾に ${CODEX_DONE_MARKER} を単独行で出力すること。
+- 未完了なら ${CODEX_DONE_MARKER} は出力しないこと。`;
+}
+
 /**
  * Create a multi-runner (Claude Code + Codex) task executor.
  * @param {object} config
@@ -33,7 +61,7 @@ export function createClaudeRunner(config) {
     return liveData;
   }
 
-  function finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype, totalCostUsd, usageData, liveData, abortController }) {
+  function finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype, totalCostUsd, usageData, liveData, abortController, statusOverride = null }) {
     runningTasks.delete(taskId);
     runningPids.delete(taskId);
     liveOutputs.delete(taskId);
@@ -43,9 +71,10 @@ export function createClaudeRunner(config) {
     if (abortController.signal.aborted) {
       stmts.update.run("cancelled", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
     } else if (!lastErrorText) {
+      const successStatus = statusOverride || "completed";
       const costInfo = totalCostUsd != null ? ` ($${totalCostUsd.toFixed(4)})` : "";
-      stmts.update.run("completed", completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
-      console.log(`[${taskId}] completed${costInfo} - ${(lastResultText || "").slice(0, 80)}`);
+      stmts.update.run(successStatus, completedAt, lastResultText || null, null, capturedSessionId, eventsJson, taskId);
+      console.log(`[${taskId}] ${successStatus}${costInfo} - ${(lastResultText || "").slice(0, 80)}`);
     } else {
       stmts.update.run("failed", completedAt, null, lastErrorText, capturedSessionId, eventsJson, taskId);
       console.log(`[${taskId}] failed - ${lastErrorText.slice(0, 100)}`);
@@ -221,79 +250,108 @@ export function createClaudeRunner(config) {
       let lastResultText = "";
       let lastErrorText = "";
       let capturedSessionId = sessionId;
+      let statusOverride = null;
+      const maxCodexTurns = Math.max(1, Number.isFinite(Number(turns)) ? Number(turns) : 1);
+      let nextPrompt = buildCodexPrompt(prompt);
 
       try {
-        const args = ["exec"];
-        if (sessionId) {
-          // Resume existing thread
-          args.push("resume", sessionId);
-        }
-        args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
-        if (codexReasoning) args.push("-c", `reasoning_effort="${codexReasoning}"`);
-        if (codexModel) args.push("-m", codexModel);
-        if (!sessionId) {
-          // --cd is only valid for new sessions, not resume
-          if (cwd || repoDir) args.push("--cd", cwd || repoDir);
-        }
-        const finalPrompt = codexPlanMode
-          ? `[PLAN MODE] Analyze the task and create a detailed implementation plan. Do NOT execute any file edits, writes, or bash commands. Only read files, search code, and think. Present your plan as a structured markdown document with steps, files to modify, and approach. End with "## Ready to implement" when done.\n\n${prompt}`
-          : prompt;
-        args.push(finalPrompt);
-
         const env = { ...process.env, ...getGhToken(), PATH: `/opt/homebrew/bin:${process.env.PATH}` };
         delete env.CLAUDECODE;
+        for (let codexTurn = 0; codexTurn < maxCodexTurns; codexTurn++) {
+          if (abortController.signal.aborted) break;
 
-        const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"], cwd: cwd || repoDir });
-        const pid = child.pid;
-        runningPids.set(taskId, pid);
-
-        abortController.signal.addEventListener("abort", () => {
-          try { process.kill(pid, "SIGTERM"); } catch {}
-        });
-
-        let stderrBuf = "";
-        child.stderr.on("data", (chunk) => {
-          const text = chunk.toString();
-          stderrBuf += text;
-          console.error(`[${taskId}] codex stderr: ${text.trim()}`);
-        });
-
-        // Parse JSONL stream
-        let lineBuf = "";
-        child.stdout.on("data", (chunk) => {
-          lineBuf += chunk.toString();
-          const lines = lineBuf.split("\n");
-          lineBuf = lines.pop(); // keep incomplete line
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const evt = JSON.parse(line);
-              // Capture thread_id as session_id for resume
-              if (evt.type === "thread.started" && evt.thread_id) {
-                capturedSessionId = evt.thread_id;
-              }
-              handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
-            } catch {}
+          const currentSessionId = capturedSessionId;
+          const args = ["exec"];
+          if (currentSessionId) {
+            args.push("resume", currentSessionId);
           }
-        });
+          args.push("--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check");
+          if (codexReasoning) args.push("-c", `reasoning_effort="${codexReasoning}"`);
+          if (codexModel) args.push("-m", codexModel);
+          if (!currentSessionId) {
+            if (cwd || repoDir) args.push("--cd", cwd || repoDir);
+          }
 
-        await new Promise((resolve) => {
-          child.on("close", (code) => {
-            if (lineBuf.trim()) {
+          let finalPrompt = nextPrompt;
+          if (!currentSessionId && codexPlanMode) {
+            finalPrompt = `[PLAN MODE] Analyze the task and create a detailed implementation plan. Do NOT execute any file edits, writes, or bash commands. Only read files, search code, and think. Present your plan as a structured markdown document with steps, files to modify, and approach. End with "## Ready to implement" when done.\n\n${nextPrompt}`;
+          }
+          args.push(finalPrompt);
+
+          if (codexTurn > 0) {
+            liveData.events.push({ type: "system", subtype: "auto_continue", turn: codexTurn + 1, max_turns: maxCodexTurns });
+          }
+
+          const child = spawn("codex", args, { env, stdio: ["ignore", "pipe", "pipe"], cwd: cwd || repoDir });
+          const pid = child.pid;
+          runningPids.set(taskId, pid);
+
+          abortController.signal.addEventListener("abort", () => {
+            try { process.kill(pid, "SIGTERM"); } catch {}
+          }, { once: true });
+
+          let stderrBuf = "";
+          child.stderr.on("data", (chunk) => {
+            const text = chunk.toString();
+            stderrBuf += text;
+            console.error(`[${taskId}] codex stderr: ${text.trim()}`);
+          });
+
+          let lineBuf = "";
+          child.stdout.on("data", (chunk) => {
+            lineBuf += chunk.toString();
+            const lines = lineBuf.split("\n");
+            lineBuf = lines.pop();
+            for (const line of lines) {
+              if (!line.trim()) continue;
               try {
-                const evt = JSON.parse(lineBuf);
+                const evt = JSON.parse(line);
                 if (evt.type === "thread.started" && evt.thread_id) {
                   capturedSessionId = evt.thread_id;
                 }
                 handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
               } catch {}
             }
-            if (code !== 0 && !abortController.signal.aborted) {
-              lastErrorText = stderrBuf.slice(0, 500) || `codex exited with code ${code}`;
-            }
-            resolve();
           });
-        });
+
+          const exitCode = await new Promise((resolve) => {
+            child.on("close", (code) => {
+              if (lineBuf.trim()) {
+                try {
+                  const evt = JSON.parse(lineBuf);
+                  if (evt.type === "thread.started" && evt.thread_id) {
+                    capturedSessionId = evt.thread_id;
+                  }
+                  handleCodexEvent(evt, liveData, (text) => { lastResultText = text; });
+                } catch {}
+              }
+              resolve(code ?? 1);
+            });
+          });
+
+          if (exitCode !== 0 && !abortController.signal.aborted) {
+            lastErrorText = stderrBuf.slice(0, 500) || `codex exited with code ${exitCode}`;
+            break;
+          }
+
+          if (codexResultHasDoneMarker(lastResultText)) {
+            lastResultText = stripCodexDoneMarker(lastResultText);
+            break;
+          }
+
+          if (codexTurn === maxCodexTurns - 1) {
+            lastResultText = stripCodexDoneMarker(lastResultText);
+            statusOverride = "max_turns";
+            break;
+          }
+
+          if (!capturedSessionId) {
+            lastResultText = stripCodexDoneMarker(lastResultText);
+            break;
+          }
+
+          nextPrompt = buildCodexContinuationPrompt();
+        }
       } catch (err) {
         if (!abortController.signal.aborted) {
           lastErrorText = err.message || "Unknown error";
@@ -301,7 +359,7 @@ export function createClaudeRunner(config) {
         }
       }
 
-      finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype: null, totalCostUsd: null, usageData: null, liveData, abortController });
+      finalizeTask(taskId, { capturedSessionId, lastResultText, lastErrorText, resultSubtype: null, totalCostUsd: null, usageData: null, liveData, abortController, statusOverride });
       await sendCallback(taskId);
     })();
   }

@@ -438,7 +438,9 @@ export function registerRoutes(app, ctx) {
     if (!taskRunner) return c.json({ error: "runner not detected in thread" }, 400);
 
     const id = randomUUID().slice(0, 8);
-    const prompt = original.prompt;
+    const prompt = taskRunner === "codex" && original.status === "max_turns"
+      ? "前回の続きから作業を継続してください。まだ完了していません。完了した場合のみ最終メッセージ末尾に [[TASK_DONE]] を単独行で出力してください。"
+      : original.prompt;
     const user = getCfUser(c);
     insertTask(id, `[retry] ${prompt}`, { cwd, sessionId, parentId: original.id, rootId, slackThreadKey: original.slack_thread_key, user, runner: taskRunner });
     runTask(id, prompt, MAX_TURNS, sessionId, cwd, taskRunner);
