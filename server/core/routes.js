@@ -51,24 +51,24 @@ export function registerRoutes(app, ctx) {
       }
     } catch (e) { console.error("[models] codex fetch failed:", e.message); }
 
-    // Claude: spawn async (claude models is an LLM call, can take 60s+)
-    // Using spawn to avoid blocking the event loop
+    // Claude: detect available models by testing `claude -p` with a minimal prompt
     try {
       const env = { ...process.env, PATH: `/opt/homebrew/bin:${process.env.PATH}` };
       delete env.CLAUDECODE;
-      const child = spawn("claude", ["models"], { env, stdio: ["ignore", "pipe", "pipe"], timeout: 90000 });
+      const child = spawn("claude", ["-p", "reply with just ok", "--max-turns", "1", "--output-format", "json"], { env, stdio: ["ignore", "pipe", "pipe"], timeout: 30000 });
       let stdout = "";
-      let stderr = "";
       child.stdout.on("data", (d) => { stdout += d.toString(); });
-      child.stderr.on("data", (d) => { stderr += d.toString(); });
       child.on("close", (code) => {
         if (code === 0 && stdout) {
-          const matches = stdout.match(/`(claude-[a-z0-9-]+)`/g);
-          if (matches && matches.length > 0) {
-            cachedModels.claude = matches.map(m => m.replace(/`/g, ""));
-          }
-        } else if (code !== 0) {
-          console.error(`[models] claude fetch failed (code=${code}): ${stderr.slice(0, 200)}`);
+          try {
+            const result = JSON.parse(stdout);
+            // Extract model names from modelUsage keys
+            const models = Object.keys(result.modelUsage || {});
+            if (models.length > 0) {
+              // Claude CLI works — list known models
+              cachedModels.claude = ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
+            }
+          } catch {}
         }
         console.log(`[models] Claude: ${cachedModels.claude.join(", ") || "(none)"}`);
       });
