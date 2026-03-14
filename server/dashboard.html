@@ -491,6 +491,7 @@
         <select id="reasoningSelect" title="推論レベル" style="display:none">
         </select>
         <button id="mainPlanModeBtn" onclick="toggleMainPlanMode()" title="計画モード切替" style="padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">PLAN</button>
+        <button id="mainLoopBtn" onclick="toggleMainLoop()" title="完了までループ (Codex)" style="display:none;padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">LOOP</button>
         <span class="spacer"></span>
         <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
@@ -525,6 +526,7 @@
           <select id="detailReasoningSelect" title="推論レベル" style="display:none;max-width:90px;padding:6px 4px;background:#2a2a2a;border:1px solid #444;border-radius:4px;color:#eee;font-size:0.75rem;cursor:pointer">
           </select>
           <button id="planModeBtn" onclick="togglePlanMode()" title="計画モード切替" style="padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">PLAN</button>
+          <button id="detailLoopBtn" onclick="toggleDetailLoop()" title="完了までループ (Codex)" style="display:none;padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">LOOP</button>
           <span class="spacer"></span>
           <button class="attach-btn" id="detailAttachBtn" onclick="document.getElementById('detailFileInput').click()">+</button>
           <button id="detailSendBtn" onclick="sendDetailReply()">返信</button>
@@ -1137,6 +1139,12 @@ function renderDetail(t) {
     const lastModel = lastInitEvt?.model && lastInitEvt.model !== '(default)' ? lastInitEvt.model : '';
     const lastReasoning = lastInitEvt?.reasoning || '';
     updateDetailModelSelect(t.runner, lastModel, lastReasoning);
+    // Show/hide LOOP button for codex threads
+    const detailLoopBtn = document.getElementById('detailLoopBtn');
+    if (detailLoopBtn) {
+      detailLoopBtn.style.display = t.runner === 'codex' ? '' : 'none';
+      updateLoopBtn('detailLoopBtn', !!threadLoopMode[selectedThreadId]);
+    }
     if (runningId) {
       // Running: show cancel button, disable input
       sendBtn.textContent = 'キャンセル';
@@ -1529,6 +1537,9 @@ function updateModelSelect() {
     return `<option value="${slug}">${slug}</option>`;
   }).join('');
   updateReasoningSelect();
+  // Show/hide LOOP button based on runner
+  const loopBtn = document.getElementById('mainLoopBtn');
+  if (loopBtn) loopBtn.style.display = runner === 'codex' ? '' : 'none';
 }
 function updateReasoningSelect() {
   const runner = document.getElementById('runnerSelect').value;
@@ -1610,6 +1621,26 @@ function updatePlanModeBtn(rootId) {
   btn.style.borderColor = active ? '#2563eb' : '#444';
 }
 
+// === Loop-until-done mode (Codex only) ===
+let mainLoopMode = false;
+const threadLoopMode = {};
+function toggleMainLoop() {
+  mainLoopMode = !mainLoopMode;
+  updateLoopBtn('mainLoopBtn', mainLoopMode);
+}
+function toggleDetailLoop() {
+  if (!selectedThreadId) return;
+  threadLoopMode[selectedThreadId] = !threadLoopMode[selectedThreadId];
+  updateLoopBtn('detailLoopBtn', threadLoopMode[selectedThreadId]);
+}
+function updateLoopBtn(id, active) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.style.background = active ? '#065f46' : 'transparent';
+  btn.style.color = active ? '#fff' : '#666';
+  btn.style.borderColor = active ? '#059669' : '#444';
+}
+
 async function sendTask() {
   if (sending) return;
   const input = document.getElementById('promptInput');
@@ -1644,6 +1675,7 @@ async function sendTask() {
     if (branch) body.branch = branch;
     if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
     if (isPlan) body.planMode = true;
+    if (runner === 'codex' && mainLoopMode) body.loopUntilDone = true;
     const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const result = await resp.json();
     if (result.id && pushSubscription) watchedThreads.add(result.id);
@@ -1707,6 +1739,7 @@ async function sendDetailReply() {
     if (reasoning) body.reasoning = reasoning;
     if (files.length > 0) body.files = files;
     if (isPlan) body.planMode = true;
+    if (replyRunner === 'codex' && threadLoopMode[selectedThreadId]) body.loopUntilDone = true;
     await fetch(API + '/task/' + taskId + '/reply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     input.value = ''; input.style.height = 'auto';
     detailReplyFiles.length = 0;

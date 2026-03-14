@@ -244,14 +244,15 @@ export function createClaudeRunner(config) {
     const codexModel = opts.model || null;
     const codexReasoning = opts.reasoning || null;
     const codexPlanMode = opts.planMode || false;
-    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", reasoning: codexReasoning, planMode: codexPlanMode, tools: [] });
+    const loopUntilDone = opts.loopUntilDone || false;
+    liveData.events.push({ type: "system", subtype: "init", model: codexModel || "(default)", runner: "codex", reasoning: codexReasoning, planMode: codexPlanMode, loopUntilDone, tools: [] });
 
     (async () => {
       let lastResultText = "";
       let lastErrorText = "";
       let capturedSessionId = sessionId;
       let statusOverride = null;
-      const maxCodexTurns = Math.max(1, Number.isFinite(Number(turns)) ? Number(turns) : 1);
+      const maxCodexTurns = loopUntilDone ? 999 : Math.max(1, Number.isFinite(Number(turns)) ? Number(turns) : 1);
       let nextPrompt = buildCodexPrompt(prompt);
 
       try {

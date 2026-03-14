@@ -162,7 +162,7 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning, pushEndpoint, planMode } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning, pushEndpoint, planMode, loopUntilDone } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -199,7 +199,7 @@ export function registerRoutes(app, ctx) {
       } catch {}
       stmts.setThreadPr.run(prUrl, branch, id);
     }
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning, planMode });
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning, planMode, loopUntilDone });
 
     // Auto-watch: creator's device gets notifications for this thread
     if (pushEndpoint && push.isEnabled) {
@@ -304,7 +304,7 @@ export function registerRoutes(app, ctx) {
     const rootId = original.root_id || original.id;
     if (stmts.threadHasRunning.get(rootId).count > 0) return c.json({ error: "thread already has a running task" }, 409);
 
-    const { prompt, maxTurns, files, runner: runnerType, model, reasoning, planMode } = await c.req.json();
+    const { prompt, maxTurns, files, runner: runnerType, model, reasoning, planMode, loopUntilDone } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
 
@@ -333,7 +333,7 @@ export function registerRoutes(app, ctx) {
     }
     const user = getCfUser(c);
     insertTask(id, displayPrompt, { cwd, sessionId, parentId: original.id, rootId, user, runner: runnerType });
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning, planMode });
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, sessionId, cwd, runnerType, { model, reasoning, planMode, loopUntilDone });
 
     return c.json({ id, status: "accepted", resuming: sessionId }, 202);
   });
