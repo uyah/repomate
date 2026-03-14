@@ -330,7 +330,7 @@ export function createClaudeRunner(config) {
           });
 
           if (exitCode !== 0 && !abortController.signal.aborted) {
-            lastErrorText = stderrBuf.slice(0, 500) || `codex exited with code ${exitCode}`;
+            lastErrorText = stderrBuf.slice(0, 500) || liveData._codexError || `codex exited with code ${exitCode}`;
             break;
           }
 
@@ -415,6 +415,13 @@ export function createClaudeRunner(config) {
       case "thread.started": {
         const initEvt = liveData.events.find(e => e.type === "system" && e.subtype === "init");
         if (initEvt) initEvt.threadId = evt.thread_id;
+        break;
+      }
+      case "error":
+      case "turn.failed": {
+        const errMsg = evt.message || evt.error?.message || JSON.stringify(evt);
+        liveData.events.push({ type: "error", message: errMsg });
+        liveData._codexError = errMsg;
         break;
       }
     }

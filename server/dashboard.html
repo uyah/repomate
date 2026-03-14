@@ -316,6 +316,8 @@
 
   /* System events */
   .evt-system { margin: 4px 0; padding: 4px 8px; font-size: 0.72rem; color: #555; text-align: center; font-style: italic; }
+  .evt-error { margin: 6px 0; padding: 8px 12px; background: #2a1515; border: 1px solid #7f1d1d; border-radius: 6px; color: #fca5a5; font-size: 0.8rem; line-height: 1.4; }
+  .evt-error-icon { margin-right: 4px; }
   .evt-system .compact-badge { background: #1a1a2a; color: #60a5fa; padding: 1px 6px; border-radius: 8px; }
 
   /* Edit diff preview */
@@ -683,6 +685,8 @@ function renderEvents(events) {
       items.push({ type: 'tool', name: e.name, input: e.input, tool_use_id: e.tool_use_id, result: result?.content, is_error: result?.is_error });
     } else if (e.type === 'tool_result') {
       items.push({ type: 'tool', name: '(result)', input: null, result: e.content, is_error: e.is_error });
+    } else if (e.type === 'error') {
+      items.push({ type: 'error', message: e.message });
     }
   }
   const grouped = [];
@@ -746,6 +750,8 @@ function renderEvents(events) {
           ${g.calls.map(c => renderSingleTool(c)).join('')}
         </div>
       </div>`;
+    } else if (g.type === 'error') {
+      html += `<div class="evt-error"><span class="evt-error-icon">⚠</span> ${esc(g.message || 'Unknown error')}</div>`;
     }
   }
   return html;
