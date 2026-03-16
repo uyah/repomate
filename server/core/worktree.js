@@ -218,6 +218,19 @@ curl -s -X POST ${API}/task/${taskId}/close
     } catch {}
   }
 
+  function getListeningPortPids(port) {
+    try {
+      const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: "utf-8", timeout: 5000 }).trim();
+      if (!output) return [];
+      return output
+        .split("\n")
+        .map((pid) => Number(pid.trim()))
+        .filter((pid) => Number.isFinite(pid) && pid > 0);
+    } catch {
+      return [];
+    }
+  }
+
   function allocatePort() {
     const startPort = devServerConfig?.startPort || 3001;
     const row = dbStmts.devServerMaxPort.get();
@@ -255,7 +268,7 @@ curl -s -X POST ${API}/task/${taskId}/close
       .replace(/\$PORT/g, String(port));
 
     const env = { ...process.env, PORT: String(port) };
-    const proc = spawn("sh", ["-c", cmd], {
+    const proc = spawn("sh", ["-c", `exec ${cmd}`], {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -288,7 +301,17 @@ curl -s -X POST ${API}/task/${taskId}/close
       appendLog(`[exited code=${code}]`);
       console.log(`[dev:${taskId}:${port}] exited (code=${code})`);
       devServerProcs.delete(taskId);
-      dbStmts.devServerDelete.run(taskId);
+      setTimeout(() => {
+        const livePids = getListeningPortPids(port);
+        if (livePids.length > 0) {
+          const livePid = livePids[0];
+          dbStmts.devServerInsert.run(taskId, port, subdomain, livePid, new Date().toISOString());
+          appendLog(`[port-still-live pid=${livePid}]`);
+          console.log(`[dev:${taskId}:${port}] wrapper exited but listener ${livePid} is still alive; keeping dev server record`);
+          return;
+        }
+        dbStmts.devServerDelete.run(taskId);
+      }, 1000);
     });
 
     devServerProcs.set(taskId, proc);
@@ -299,10 +322,14 @@ curl -s -X POST ${API}/task/${taskId}/close
   }
 
   function stopDevServer(taskId) {
+    const ds = dbStmts.devServerGet.get(taskId);
     const proc = devServerProcs.get(taskId);
     if (proc) {
       try { process.kill(-proc.pid, "SIGTERM"); } catch {}
       devServerProcs.delete(taskId);
+    }
+    if (ds?.port) {
+      killPortUser(ds.port);
     }
     dbStmts.devServerDelete.run(taskId);
     // Keep logs — don't delete from devServerLogs
