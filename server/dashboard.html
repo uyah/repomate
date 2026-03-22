@@ -492,6 +492,7 @@
         </select>
         <button id="mainPlanModeBtn" onclick="toggleMainPlanMode()" title="計画モード切替" style="padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">PLAN</button>
         <button id="mainLoopBtn" onclick="toggleMainLoop()" title="完了までループ (Codex)" style="display:none;padding:4px 8px;background:transparent;border:1px solid #444;border-radius:4px;color:#666;font-size:0.7rem;cursor:pointer">LOOP</button>
+        <button id="mainWorktreeBtn" onclick="toggleMainWorktree()" title="Worktree切替 (OFF→メインリポで実行)" style="padding:4px 8px;background:#1a3a1a;border:1px solid #2a4a2a;border-radius:4px;color:#4ade80;font-size:0.7rem;cursor:pointer;font-weight:600">WT</button>
         <span class="spacer"></span>
         <button class="attach-btn-main" onclick="toggleBranchInput()" title="ブランチ指定" style="font-size:0.7rem">🌿</button>
         <button class="attach-btn-main" onclick="document.getElementById('mainFileInput').click()">+</button>
@@ -1292,7 +1293,14 @@ async function loadPage(isRefresh) {
       devServersMap = {};
       for (const ds of devServers) devServersMap[ds.task_id] = ds;
       // Public config
-      if (results[3]) publicConfig = results[3];
+      if (results[3]) {
+        const isFirstLoad = !publicConfig;
+        publicConfig = results[3];
+        if (isFirstLoad) {
+          mainWorktreeMode = publicConfig.useWorktree !== false;
+          updateWorktreeBtn();
+        }
+      }
     }
     if (isRefresh && results[1]) {
       const status = results[1];
@@ -1641,6 +1649,28 @@ function updateLoopBtn(id, active) {
   btn.style.borderColor = active ? '#059669' : '#444';
 }
 
+// === Worktree mode ===
+let mainWorktreeMode = true; // default, overridden by publicConfig
+function toggleMainWorktree() {
+  mainWorktreeMode = !mainWorktreeMode;
+  updateWorktreeBtn();
+}
+function updateWorktreeBtn() {
+  const btn = document.getElementById('mainWorktreeBtn');
+  if (!btn) return;
+  btn.style.background = mainWorktreeMode ? '#1a3a1a' : 'transparent';
+  btn.style.color = mainWorktreeMode ? '#4ade80' : '#666';
+  btn.style.borderColor = mainWorktreeMode ? '#2a4a2a' : '#444';
+  const branchBtn = document.querySelector('[onclick="toggleBranchInput()"]');
+  if (branchBtn) branchBtn.style.display = mainWorktreeMode ? '' : 'none';
+  if (!mainWorktreeMode) {
+    const bi = document.getElementById('branchInput');
+    if (bi) bi.value = '';
+    const bir = document.getElementById('branchInputRow');
+    if (bir) bir.style.display = 'none';
+  }
+}
+
 async function sendTask() {
   if (sending) return;
   const input = document.getElementById('promptInput');
@@ -1676,6 +1706,7 @@ async function sendTask() {
     if (pushSubscription) body.pushEndpoint = pushSubscription.endpoint;
     if (isPlan) body.planMode = true;
     if (runner === 'codex' && mainLoopMode) body.loopUntilDone = true;
+    if (!mainWorktreeMode) body.useWorktree = false;
     const resp = await fetch(API + '/task', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const result = await resp.json();
     if (result.id && pushSubscription) watchedThreads.add(result.id);

@@ -8,6 +8,7 @@
     "type": "gh-cli"
   },
 
+  "useWorktree": true,
   "pollInterval": 180,
 
   "phases": {

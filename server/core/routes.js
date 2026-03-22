@@ -29,6 +29,7 @@ export function registerRoutes(app, ctx) {
   app.get("/config/public", (c) => {
     return c.json({
       devServer: config.devServer || null,
+      useWorktree: config.useWorktree !== false,
     });
   });
 
@@ -162,9 +163,14 @@ export function registerRoutes(app, ctx) {
 
   // --- Create task ---
   app.post("/task", async (c) => {
-    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning, pushEndpoint, planMode, loopUntilDone } = await c.req.json();
+    const { prompt, maxTurns, callback, files, branch, runner: runnerType, model, reasoning, pushEndpoint, planMode, loopUntilDone, useWorktree } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     if (!runnerType || !["claude", "codex"].includes(runnerType)) return c.json({ error: `runner is required. Must be "claude" or "codex"` }, 400);
+
+    const shouldUseWorktree = useWorktree !== undefined ? useWorktree !== false : config.useWorktree !== false;
+    if (!shouldUseWorktree && branch) {
+      return c.json({ error: "Cannot specify branch without worktree" }, 400);
+    }
 
     let displayPrompt = prompt;
     let fullPrompt = prompt;
@@ -185,9 +191,11 @@ export function registerRoutes(app, ctx) {
     }
 
     const id = randomUUID().slice(0, 8);
-    const worktreeCwd = createWorktree(id, branch ? { branch: `origin/${branch}` } : undefined);
+    const taskCwd = shouldUseWorktree
+      ? createWorktree(id, branch ? { branch: `origin/${branch}` } : undefined)
+      : null;
     const user = getCfUser(c);
-    insertTask(id, displayPrompt, { callback, cwd: worktreeCwd, rootId: id, user, runner: runnerType });
+    insertTask(id, displayPrompt, { callback, cwd: taskCwd, rootId: id, user, runner: runnerType });
     if (branch) {
       // Look up existing PR for this branch
       let prUrl = null;
@@ -199,7 +207,7 @@ export function registerRoutes(app, ctx) {
       } catch {}
       stmts.setThreadPr.run(prUrl, branch, id);
     }
-    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, worktreeCwd, runnerType, { model, reasoning, planMode, loopUntilDone });
+    runTask(id, fullPrompt, maxTurns || MAX_TURNS, null, taskCwd, runnerType, { model, reasoning, planMode, loopUntilDone });
 
     // Auto-watch: creator's device gets notifications for this thread
     if (pushEndpoint && push.isEnabled) {
@@ -211,16 +219,17 @@ export function registerRoutes(app, ctx) {
 
   // --- Sync task ---
   app.post("/task/sync", async (c) => {
-    const { prompt, maxTurns, runner: runnerType } = await c.req.json();
+    const { prompt, maxTurns, runner: runnerType, useWorktree } = await c.req.json();
     if (!prompt) return c.json({ error: "prompt is required" }, 400);
     const effectiveRunner = runnerType || "claude";
+    const shouldUseWorktree = useWorktree !== undefined ? useWorktree !== false : config.useWorktree !== false;
 
     const id = randomUUID().slice(0, 8);
-    const worktreeCwd = createWorktree(id);
+    const taskCwd = shouldUseWorktree ? createWorktree(id) : null;
     const user = getCfUser(c);
-    insertTask(id, prompt, { cwd: worktreeCwd, rootId: id, user, runner: effectiveRunner });
+    insertTask(id, prompt, { cwd: taskCwd, rootId: id, user, runner: effectiveRunner });
 
-    const task = await runner.runSync(id, prompt, maxTurns || MAX_TURNS, null, worktreeCwd, effectiveRunner);
+    const task = await runner.runSync(id, prompt, maxTurns || MAX_TURNS, null, taskCwd, effectiveRunner);
     return c.json(task);
   });
 
