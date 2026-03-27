@@ -647,7 +647,21 @@ function renderRunningIndicator(events) {
 }
 
 // === Tool rendering ===
-let toolToggleId = 0;
+const openToolPanels = new Set();
+
+function hashToggleKey(key) {
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) hash = ((hash << 5) + hash) ^ key.charCodeAt(i);
+  return (hash >>> 0).toString(36);
+}
+
+function getToggleId(key) {
+  return 'tg-' + hashToggleKey(key);
+}
+
+function isToolOpen(id) {
+  return openToolPanels.has(id);
+}
 
 function toolSummary(name, input) {
   if (!input || typeof input !== 'object') return '';
@@ -666,9 +680,10 @@ function toolSummary(name, input) {
   return '';
 }
 
-function renderEvents(events) {
+function renderEvents(events, scopeKey) {
   if (!events || events.length === 0) return '';
   const items = [];
+  const baseScope = scopeKey || 'events';
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     if (e.type === 'text') {
@@ -706,15 +721,18 @@ function renderEvents(events) {
     }
   }
   let html = '';
-  for (const g of grouped) {
+  for (let groupIndex = 0; groupIndex < grouped.length; groupIndex++) {
+    const g = grouped[groupIndex];
+    const groupKey = `${baseScope}:${groupIndex}`;
     if (g.type === 'text') {
       html += `<div class="evt-text">${renderMarkdown(g.text)}</div>`;
     } else if (g.type === 'thinking') {
-      const tid = 'think-' + (toolToggleId++);
+      const tid = getToggleId(`${groupKey}:thinking`);
+      const openClass = isToolOpen(tid) ? ' open' : '';
       const preview = (g.text || '').slice(0, 60).replace(/\n/g, ' ');
       html += `<div class="evt-thinking evt-thinking-toggle" onclick="toggleTool('${tid}')">
-        <div class="evt-thinking-label"><span class="evt-toggle" id="${tid}-arrow">▶</span> thinking</div>
-        <div class="evt-group-body" id="${tid}"><div class="evt-thinking-text">${esc(g.text || '')}</div></div>
+        <div class="evt-thinking-label"><span class="evt-toggle${openClass}" id="${tid}-arrow">▶</span> thinking</div>
+        <div class="evt-group-body${openClass}" id="${tid}"><div class="evt-thinking-text">${esc(g.text || '')}</div></div>
         <div class="evt-thinking-text" style="max-height:1.2em;overflow:hidden">${esc(preview)}</div>
       </div>`;
     } else if (g.type === 'system') {
@@ -740,17 +758,18 @@ function renderEvents(events) {
         <div class="evt-suggestion-text">${esc(g.suggestion || '')}</div>
       </div>`;
     } else if (g.type === 'tool_group' && g.calls.length === 1) {
-      html += renderSingleTool(g.calls[0]);
+      html += renderSingleTool(g.calls[0], `${groupKey}:tool:0`);
     } else if (g.type === 'tool_group') {
-      const gid = 'tg-' + (toolToggleId++);
+      const gid = getToggleId(`${groupKey}:group:${g.name}`);
+      const openClass = isToolOpen(gid) ? ' open' : '';
       html += `<div class="evt-group">
         <div class="evt-group-header" onclick="toggleTool('${gid}')">
-          <span class="evt-toggle" id="${gid}-arrow">▶</span>
+          <span class="evt-toggle${openClass}" id="${gid}-arrow">▶</span>
           <span class="evt-tool-name">${esc(g.name)}</span>
           <span class="evt-tool-count">×${g.calls.length}</span>
         </div>
-        <div class="evt-group-body" id="${gid}">
-          ${g.calls.map(c => renderSingleTool(c)).join('')}
+        <div class="evt-group-body${openClass}" id="${gid}">
+          ${g.calls.map((c, callIndex) => renderSingleTool(c, `${groupKey}:tool:${callIndex}`)).join('')}
         </div>
       </div>`;
     } else if (g.type === 'error') {
@@ -783,7 +802,7 @@ function renderToolInput(name, input) {
 }
 
 let _showPlanActions = false;
-function renderSingleTool(item) {
+function renderSingleTool(item, scopeKey) {
   // ExitPlanMode: render as a plan approval card
   if (item.name === 'ExitPlanMode') {
     const planText = item.result || (item.input?.plan) || '';
@@ -802,19 +821,20 @@ function renderSingleTool(item) {
       ${actionsHtml}
     </div>`;
   }
-  const tid = 'tg-' + (toolToggleId++);
+  const tid = getToggleId(scopeKey || `${item.name || 'tool'}:${item.tool_use_id || ''}`);
+  const openClass = isToolOpen(tid) ? ' open' : '';
   const summary = esc(toolSummary(item.name, item.input));
   const resultStr = item.result || '';
   const isRealError = item.is_error && item.name !== 'ExitPlanMode';
   const errorClass = isRealError ? ' evt-tool-error' : '';
   return `<div class="evt-group">
     <div class="evt-group-header" onclick="toggleTool('${tid}')">
-      <span class="evt-toggle" id="${tid}-arrow">▶</span>
+      <span class="evt-toggle${openClass}" id="${tid}-arrow">▶</span>
       <span class="evt-tool-name">${esc(item.name)}</span>
       <span class="evt-tool-summary">${summary}</span>
       ${isRealError ? '<span class="evt-tool-error">error</span>' : ''}
     </div>
-    <div class="evt-group-body" id="${tid}">
+    <div class="evt-group-body${openClass}" id="${tid}">
       ${item.input ? renderToolInput(item.name, item.input) : ''}
       ${resultStr ? `<div class="evt-detail-label">output</div><div class="evt-detail-result${errorClass}">${esc(resultStr.slice(0, 2000))}</div>` : ''}
     </div>
@@ -827,6 +847,8 @@ function toggleTool(id) {
   if (!body) return;
   body.classList.toggle('open');
   arrow?.classList.toggle('open');
+  if (body.classList.contains('open')) openToolPanels.add(id);
+  else openToolPanels.delete(id);
 }
 
 // === List: compact thread item ===
@@ -947,7 +969,7 @@ function renderDetailMsg(t, isReply, isLast, opts) {
     _showPlanActions = false;
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
-      <div id="events-${t.id}">${t.events ? renderEvents(t.events) : ''}</div>
+      <div id="events-${t.id}">${t.events ? renderEvents(t.events, 'task:' + t.id) : ''}</div>
       <div id="running-ind-${t.id}">${renderRunningIndicator(t.events)}</div>
     </div>`;
     startStream(t.id);
@@ -957,7 +979,7 @@ function renderDetailMsg(t, isReply, isLast, opts) {
     _showPlanActions = isLast && !opts.closed && !opts.hasRunning;
     html += `<div class="msg msg-assistant msg-reply">
       <div class="msg-meta"><span class="msg-role msg-role-assistant">${getRunnerName(t)}</span> ${meta}</div>
-      <div>${renderEvents(t.events)}</div>
+      <div>${renderEvents(t.events, 'task:' + t.id)}</div>
       ${t.error ? `<div class="msg-text error-text">${esc(String(t.error).slice(0, 500))}</div>` : ''}
       ${t.status === 'max_turns' ? `<button class="retry-btn" onclick="retryTask('${t.id}')">続行 (max turns到達)</button>` : retryable ? `<button class="retry-btn" onclick="retryTask('${t.id}')">再実行</button>` : ''}
     </div>`;
@@ -1228,7 +1250,7 @@ function startStream(taskId) {
         // Full re-render only if events changed significantly
         if (data.events.length !== prevCount) {
           const wasAtBottom = isDetailAtBottom();
-          el.innerHTML = renderEvents(data.events);
+          el.innerHTML = renderEvents(data.events, 'task:' + taskId);
           streamEventCounts.set(taskId, data.events.length);
           if (wasAtBottom) scrollDetailToBottom();
         }
