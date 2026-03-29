@@ -210,7 +210,7 @@ export async function createApp(config) {
   if (adapters.includes("slack")) {
     try {
       const { registerSlack } = await import("../adapters/slack.js");
-      registerSlack(app, { db, stmts, userStmts, taskToJson, runner, worktrees, config: {
+      await registerSlack(app, { db, stmts, userStmts, taskToJson, runner, worktrees, config: {
         uploadsDir, maxTurns, repoDir,
         customSlackHandlers: config.webhookServer?.customSlackHandlers || null,
         actionHandlerCommand: config.webhookServer?.actionHandlerCommand || null,

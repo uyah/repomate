@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { spawn } from "child_process";
 import { existsSync, writeFileSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join, extname, basename } from "path";
 import pkg from "@slack/bolt";
@@ -9,7 +10,7 @@ const { App: SlackApp, LogLevel } = pkg;
  * @param {import('hono').Hono} app - Hono app (unused for Slack Socket Mode, but available for future HTTP webhooks)
  * @param {object} ctx - { db, stmts, userStmts, taskToJson, runner, worktrees, config }
  */
-export function registerSlack(app, ctx) {
+export async function registerSlack(app, ctx) {
   const { stmts, userStmts, runner, worktrees, config } = ctx;
   const { runSync, runningPids } = runner;
   const { createWorktree, removeWorktree, getWorktreeChanges, commitAndMergeToMain, createPullRequest, closeThread } = worktrees;
@@ -320,7 +321,6 @@ export function registerSlack(app, ctx) {
 
   if (actionHandlerCmd) {
     // === Generic action dispatcher via external command ===
-    const { spawn } = await import("child_process");
     const recentDispatchIds = new Set();
 
     function spawnHandler(inputPayload) {

@@ -1,0 +1,32 @@
+{
+  "repo": "uyah/repomate",
+  "label": "repomate",
+  "repoDir": "$HOME/Workspace/mac-mini-automation",
+  "worktreeBase": "$HOME/Workspace/repomate-worktrees",
+  "useWorktree": true,
+
+  "auth": {
+    "type": "gh-cli"
+  },
+
+  "phases": {
+    "analyze": {
+      "maxTurns": 10,
+      "useWorktree": true
+    },
+    "implement": {
+      "maxTurns": 30
+    },
+    "review": {
+      "maxTurns": 15
+    },
+    "conflict": {
+      "maxTurns": 15
+    }
+  },
+
+  "webhookServer": {
+    "port": 8080,
+    "adapters": []
+  }
+}
