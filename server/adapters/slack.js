@@ -315,6 +315,130 @@ export function registerSlack(app, ctx) {
     }
   });
 
+  // --- Action/View dispatcher ---
+  const actionHandlerCmd = config.actionHandlerCommand;
+
+  if (actionHandlerCmd) {
+    // === Generic action dispatcher via external command ===
+    const { spawn } = await import("child_process");
+    const recentDispatchIds = new Set();
+
+    function spawnHandler(inputPayload) {
+      return new Promise((resolve, reject) => {
+        const child = spawn("sh", ["-c", actionHandlerCmd], {
+          cwd: REPO_DIR,
+          env: { ...process.env, REPO_DIR },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        child.stdin.write(JSON.stringify(inputPayload));
+        child.stdin.end();
+
+        let stdout = "", stderr = "";
+        child.stdout.on("data", (d) => { stdout += d.toString(); });
+        child.stderr.on("data", (d) => { stderr += d.toString(); });
+
+        child.on("close", (code) => {
+          if (stderr) console.log(`[action-handler] stderr: ${stderr.slice(0, 500)}`);
+          if (code !== 0) reject(new Error(`exit ${code}: ${stderr.slice(0, 300)}`));
+          else resolve(stdout.trim());
+        });
+        child.on("error", reject);
+      });
+    }
+
+    async function handleDispatchTask(msg, userId) {
+      if (!msg.request_id || !msg.prompt || !msg.channel) return;
+      if (recentDispatchIds.has(msg.request_id)) {
+        console.log(`[action-handler] Duplicate dispatch ${msg.request_id}, skipping`);
+        return;
+      }
+      recentDispatchIds.add(msg.request_id);
+      setTimeout(() => recentDispatchIds.delete(msg.request_id), 300_000);
+
+      const fakeEvent = {
+        channel: msg.channel,
+        ts: msg.thread_ts || msg.channel,
+        thread_ts: msg.thread_ts,
+        user: userId,
+      };
+      const fakeSay = async (opts) => {
+        const payload = typeof opts === "string" ? { text: opts } : opts;
+        await slack.client.chat.postMessage({
+          channel: msg.channel,
+          thread_ts: msg.thread_ts,
+          ...payload,
+        });
+      };
+      await handleSlackTask(msg.prompt, fakeEvent, fakeSay);
+    }
+
+    slack.action(/.+/, async ({ body, ack, client }) => {
+      await ack();
+      const action = body.actions?.[0];
+      const input = {
+        v: 1, type: "action",
+        action_id: action?.action_id,
+        trigger_id: body.trigger_id,
+        user_id: body.user?.id,
+        channel_id: body.channel?.id,
+        message_ts: body.message?.ts,
+        action_value: action?.value || "",
+        repo_dir: REPO_DIR,
+      };
+      console.log(`[action-handler] action: ${input.action_id}`);
+      try {
+        const stdout = await spawnHandler(input);
+        if (stdout) {
+          const msg = JSON.parse(stdout);
+          if (msg.v === 1 && msg.kind === "dispatch_task") {
+            await handleDispatchTask(msg, body.user?.id);
+          }
+        }
+      } catch (err) {
+        console.error(`[action-handler] ${input.action_id}: ${err.message}`);
+      }
+    });
+
+    slack.view(/.+/, async ({ ack, view, body, client }) => {
+      await ack();
+      const input = {
+        v: 1, type: "view_submission",
+        callback_id: view.callback_id,
+        user_id: body.user?.id,
+        private_metadata: view.private_metadata || "",
+        view_state: view.state?.values || {},
+        repo_dir: REPO_DIR,
+      };
+      console.log(`[action-handler] view: ${input.callback_id}`);
+      try {
+        const stdout = await spawnHandler(input);
+        if (stdout) {
+          const msg = JSON.parse(stdout);
+          if (msg.v === 1 && msg.kind === "dispatch_task") {
+            await handleDispatchTask(msg, body.user?.id);
+          }
+        }
+      } catch (err) {
+        console.error(`[action-handler] view ${input.callback_id}: ${err.message}`);
+      }
+    });
+
+    console.log(`[slack] Action handler: ${actionHandlerCmd}`);
+
+  } else if (config.customSlackHandlers) {
+    // === Legacy: load custom handlers JS file ===
+    try {
+      const handlersPath = config.customSlackHandlers.startsWith("/")
+        ? config.customSlackHandlers
+        : join(REPO_DIR, config.customSlackHandlers);
+      const { registerCustomSlackHandlers } = await import(handlersPath);
+      registerCustomSlackHandlers(slack, { config: { repoDir: REPO_DIR, uploadsDir: UPLOADS_DIR } });
+      console.log(`[slack] Custom handlers loaded from ${handlersPath}`);
+    } catch (err) {
+      console.error(`[slack] Failed to load custom handlers: ${err.message}`);
+    }
+  }
+
   slack.start()
     .then(() => console.log("[slack] Slack bot running (Socket Mode)"))
     .catch((err) => console.error("[slack] Failed to start:", err.message));
